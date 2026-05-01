@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>App Metrics Dashboard</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Germania Mobile App Metrics Dashboard</h1>
+        </header>
+
+        <main>
+
+            <section class="metrics-dashboard">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
+                    <h2 style="margin-bottom: 0;">Current Metrics</h2>
+                    <div>
+                        <button id="sync-germania-btn" class="btn-primary" style="background: #10b981; margin-right: 0.5rem;">Sync Public Data</button>
+                        <button id="sync-private-btn" class="btn-primary" style="background: #8b5cf6;">Sync Private Data</button>
+                    </div>
+                </div>
+                <div id="metrics-grid" class="metrics-grid">
+                    <!-- Metrics cards will be injected here via JS -->
+                </div>
+            </section>
+
+            <section class="yearly-dashboard glass-panel" style="margin-top: 3rem;">
+                <h2 style="margin-bottom: 1.5rem; font-size: 1.5rem; font-weight: 600;">Yearly Downloads (Last 3 Years)</h2>
+                <div style="overflow-x: auto;">
+                    <table style="width: 100%; border-collapse: collapse; text-align: left;">
+                        <thead>
+                            <tr style="border-bottom: 1px solid var(--glass-border);">
+                                <th style="padding: 1rem; color: var(--text-muted);">Year</th>
+                                <th style="padding: 1rem; color: var(--text-muted);">Platform</th>
+                                <th style="padding: 1rem; color: var(--text-muted);">Total Downloads</th>
+                            </tr>
+                        </thead>
+                        <tbody id="yearly-tbody">
+                            <!-- Yearly data injected here -->
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+
+            <section class="historical-dashboard glass-panel" style="margin-top: 3rem;">
+                <h2 style="margin-bottom: 1.5rem; font-size: 1.5rem; font-weight: 600;">Monthly Downloads (Current Year)</h2>
+                <div style="overflow-x: auto;">
+                    <table style="width: 100%; border-collapse: collapse; text-align: left;">
+                        <thead>
+                            <tr style="border-bottom: 1px solid var(--glass-border);">
+                                <th style="padding: 1rem; color: var(--text-muted);">Month</th>
+                                <th style="padding: 1rem; color: var(--text-muted);">App Name</th>
+                                <th style="padding: 1rem; color: var(--text-muted);">Platform</th>
+                                <th style="padding: 1rem; color: var(--text-muted);">Downloads</th>
+                                <th style="padding: 1rem; color: var(--text-muted);">Uninstalls</th>
+                            </tr>
+                        </thead>
+                        <tbody id="historical-tbody">
+                            <!-- Historical data injected here -->
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <script src="{{ url_for('static', filename='script.js') }}"></script>
+</body>
+</html>
