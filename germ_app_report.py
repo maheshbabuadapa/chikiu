@@ -191,7 +191,7 @@ def get_android_stats():
                 pkg = row.get("Package name", row.get("Package Name", "")).strip()
                 if pkg != ANDROID_PKG:
                     continue
-                daily = int(row.get("Daily Device Installs", 0) or 0)
+                daily = int(row.get("Daily User Installs", 0) or 0)
                 monthly_sum += daily
                 total += daily
         except Exception as e:
