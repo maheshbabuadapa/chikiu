@@ -54,8 +54,9 @@ document.addEventListener('DOMContentLoaded', () => {
         const iosDl = ios.downloads ?? null;
 
         set('kpi-android-downloads', androidDl !== null ? fmt(androidDl) + '+' : '—');
-        set('kpi-android-installs', 'Google Play Store');
-        set('kpi-ios-downloads', iosDl !== null && iosDl > 0 ? fmt(iosDl) : 'N/A (Private API)');
+        set('kpi-android-installs',  'Google Play Store');
+        set('kpi-ios-downloads',     iosDl > 0 ? fmt(iosDl) : '⏳ Pending');
+        set('kpi-ios-sub',           iosDl > 0 ? 'Apple App Store' : 'Analytics API — ready tomorrow');
 
         const aRating = android.rating ?? 0;
         const iRating = ios.rating ?? 0;
