@@ -205,89 +205,126 @@ def sync_private_data():
             except Exception as e:
                 print(f"Error connecting to GCS: {e}")
 
-        # --- 2. APPLE APP STORE CONNECT ---
-        # Apple YEARLY reports are only available after the year ends.
-        # Instead, we fetch MONTHLY reports for each month so far this year and sum them.
-        issuer_id = os.environ.get('APPLE_ISSUER_ID')
-        key_id = os.environ.get('APPLE_KEY_ID')
-        key_path = os.environ.get('APPLE_PRIVATE_KEY_PATH')
-        vendor_number = os.environ.get('APPLE_VENDOR_NUMBER')
+        # --- 2. APPLE APP STORE CONNECT (Analytics Reports API) ---
+        # The Sales Reports API only records financial transactions.
+        # For free app downloads, we must use the Analytics Reports API instead.
+        issuer_id     = os.environ.get('APPLE_ISSUER_ID')
+        key_id        = os.environ.get('APPLE_KEY_ID')
+        key_path      = os.environ.get('APPLE_PRIVATE_KEY_PATH')
+        APPLE_APP_ID  = '1535269629'
 
-        if not all([issuer_id, key_id, key_path, vendor_number]):
-            print("Apple credentials not fully configured in .env — skipping Apple sync.")
+        if not all([issuer_id, key_id, key_path]):
+            print("Apple credentials not fully configured — skipping Apple sync.")
         elif not os.path.exists(key_path):
             print(f"Apple .p8 key file not found at: {key_path}")
         else:
             try:
-                import gzip, io as sysio, csv
+                import gzip, io as sysio, csv, json as pyjson
+
                 with open(key_path, 'r') as f:
                     private_key = f.read()
 
-                current_month_num = datetime.now().month
-
-                for month_num in range(1, current_month_num + 1):
-                    month_str = f"{current_year}-{month_num:02d}"
-
-                    # Generate a fresh token for each request (they expire)
-                    token = jwt.encode(
-                        {
-                            "iss": issuer_id,
-                            "exp": int(time.time()) + 1200,
-                            "aud": "appstoreconnect-v1"
-                        },
-                        private_key,
-                        algorithm="ES256",
-                        headers={"kid": key_id}
+                def make_token():
+                    return jwt.encode(
+                        {"iss": issuer_id, "exp": int(time.time()) + 1200, "aud": "appstoreconnect-v1"},
+                        private_key, algorithm="ES256", headers={"kid": key_id}
                     )
 
-                    url = (
-                        f"https://api.appstoreconnect.apple.com/v1/salesReports"
-                        f"?filter[frequency]=MONTHLY"
-                        f"&filter[reportSubType]=SUMMARY"
-                        f"&filter[reportType]=SALES"
-                        f"&filter[vendorNumber]={vendor_number}"
-                        f"&filter[reportDate]={month_str}"
+                headers_auth = {'Authorization': f'Bearer {make_token()}'}
+
+                # Step 1: Find or create an ONGOING analytics report request for this app
+                request_id = None
+                list_url = f'https://api.appstoreconnect.apple.com/v1/analyticsReportRequests?filter[app]={APPLE_APP_ID}'
+                list_resp = requests.get(list_url, headers=headers_auth)
+
+                if list_resp.status_code == 200:
+                    for req in list_resp.json().get('data', []):
+                        if req.get('attributes', {}).get('accessType') == 'ONGOING':
+                            request_id = req['id']
+                            print(f"Found existing analytics request: {request_id}")
+                            break
+
+                if not request_id:
+                    create_resp = requests.post(
+                        'https://api.appstoreconnect.apple.com/v1/analyticsReportRequests',
+                        headers={**headers_auth, 'Content-Type': 'application/json'},
+                        data=pyjson.dumps({
+                            "data": {
+                                "type": "analyticsReportRequests",
+                                "attributes": {"accessType": "ONGOING"},
+                                "relationships": {"app": {"data": {"type": "apps", "id": APPLE_APP_ID}}}
+                            }
+                        })
                     )
-                    resp = requests.get(url, headers={'Authorization': f'Bearer {token}'})
-
-                    if resp.status_code == 200:
-                        try:
-                            data = gzip.decompress(resp.content).decode('utf-8')
-                        except Exception:
-                            data = resp.content.decode('utf-8')  # not gzipped
-
-                        reader = csv.DictReader(sysio.StringIO(data), delimiter='\t')
-                        type_counts = {}
-                        app_type_counts = {}  # Only for Germania Insurance app
-                        month_total = 0
-                        APPLE_APP_ID = '1535269629'
-
-                        for row in reader:
-                            units        = int(row.get('Units', 0) or 0)
-                            product_type = row.get('Product Type Identifier', '').strip()
-                            apple_id     = str(row.get('Apple Identifier', '')).strip()
-
-                            # Track all types across all products
-                            type_counts[product_type] = type_counts.get(product_type, 0) + units
-
-                            # Track types ONLY for Germania Insurance app
-                            if apple_id == APPLE_APP_ID:
-                                app_type_counts[product_type] = app_type_counts.get(product_type, 0) + units
-                                # Count all units for this specific app as downloads
-                                # (free apps show type '1' for new, '1T' for re-download)
-                                if product_type in ('1', '1T'):
-                                    ios_downloads += units
-                                    month_total   += units
-
-                        print(f"Apple {month_str}: Germania app types={app_type_counts} | all vendor types={type_counts}")
-                        print(f"Apple {month_str}: +{month_total} downloads counted for Germania (ID={APPLE_APP_ID})")
-                    elif resp.status_code == 404:
-                        print(f"No Apple report available for {month_str} (404) — skipping.")
+                    if create_resp.status_code == 201:
+                        request_id = create_resp.json()['data']['id']
+                        print(f"Created analytics request: {request_id}. Reports may take up to 24h to generate.")
                     else:
-                        print(f"Apple API error for {month_str}: {resp.status_code} — {resp.text[:300]}")
+                        print(f"Failed to create analytics request: {create_resp.status_code} {create_resp.text[:200]}")
+
+                # Step 2: Find the App Usage report (contains Downloads metric)
+                if request_id:
+                    headers_auth = {'Authorization': f'Bearer {make_token()}'}
+                    reports_resp = requests.get(
+                        f'https://api.appstoreconnect.apple.com/v1/analyticsReportRequests/{request_id}/reports',
+                        headers=headers_auth
+                    )
+
+                    if reports_resp.status_code == 200:
+                        for report in reports_resp.json().get('data', []):
+                            category = report.get('attributes', {}).get('category', '')
+                            if category != 'APP_USAGE':
+                                continue
+
+                            report_id = report['id']
+                            headers_auth = {'Authorization': f'Bearer {make_token()}'}
+                            segs_resp = requests.get(
+                                f'https://api.appstoreconnect.apple.com/v1/analyticsReports/{report_id}/segments',
+                                headers=headers_auth
+                            )
+
+                            if segs_resp.status_code != 200:
+                                continue
+
+                            for seg in segs_resp.json().get('data', []):
+                                # Filter to current year segments
+                                seg_date = seg.get('attributes', {}).get('checksum', '')
+                                dl_url   = seg.get('attributes', {}).get('url', '')
+                                if not dl_url:
+                                    continue
+
+                                headers_auth = {'Authorization': f'Bearer {make_token()}'}
+                                seg_resp = requests.get(dl_url, headers=headers_auth)
+                                if seg_resp.status_code != 200:
+                                    continue
+
+                                try:
+                                    raw = gzip.decompress(seg_resp.content).decode('utf-8')
+                                except Exception:
+                                    raw = seg_resp.content.decode('utf-8')
+
+                                reader = csv.DictReader(sysio.StringIO(raw), delimiter='\t')
+                                for row in reader:
+                                    # Date format: YYYY-MM-DD — only count current year
+                                    row_date = row.get('Date', '') or row.get('date', '')
+                                    if not row_date.startswith(current_year):
+                                        continue
+                                    # Downloads column names vary — handle common ones
+                                    dl = (row.get('Downloads') or row.get('Total Downloads') or
+                                          row.get('First Time Downloads') or '0')
+                                    re_dl = row.get('Redownloads') or row.get('Re-Downloads') or '0'
+                                    try:
+                                        ios_downloads += int(str(dl).replace(',', '') or 0)
+                                        ios_downloads += int(str(re_dl).replace(',', '') or 0)
+                                    except ValueError:
+                                        pass
+
+                        print(f"Apple Analytics: {ios_downloads:,} total iOS downloads for {current_year}")
+                    else:
+                        print(f"Analytics reports not ready yet (status {reports_resp.status_code}). Try syncing again tomorrow.")
 
             except Exception as e:
-                print(f"Error fetching App Store Connect reports: {e}")
+                print(f"Error fetching Apple Analytics: {e}")
 
         # --- 3. SAVE TO yearly_metrics TABLE ---
         with sqlite3.connect(DB_NAME) as conn:
