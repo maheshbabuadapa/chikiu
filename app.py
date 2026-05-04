@@ -143,24 +143,33 @@ def sync_private_data():
         ios_uninstalls = 0
 
         # --- 1. GOOGLE PLAY CONSOLE ---
-        # Google Play Console exports yearly install/uninstall reports to a GCS bucket.
-        # The report filename format is: installs_com.germania.mobile.app_YYYY_overview.csv
+        # Google Play Console exports MONTHLY CSVs (not yearly).
+        # We loop through each month of the current year and sum them up.
         bucket_name = os.environ.get('GOOGLE_PLAY_BUCKET_ID')
         if bucket_name and os.environ.get('GOOGLE_APPLICATION_CREDENTIALS'):
             try:
                 import io, csv
                 storage_client = storage.Client()
                 bucket = storage_client.bucket(bucket_name)
-                # Download the yearly overview CSV for the current year
-                blob_name = f"stats/installs/installs_com.germania.mobile.app_{current_year}_overview.csv"
-                blob = bucket.blob(blob_name)
-                content = blob.download_as_text()
-                reader = csv.DictReader(io.StringIO(content))
-                for row in reader:
-                    android_downloads += int(row.get('Daily Device Installs', 0) or 0)
-                    android_uninstalls += int(row.get('Daily Device Uninstalls', 0) or 0)
+                current_month_num = datetime.now().month
+
+                for month_num in range(1, current_month_num + 1):
+                    month_str = f"{current_year}{month_num:02d}"
+                    blob_name = f"stats/installs/installs_com.germania.mobile.app_{month_str}_overview.csv"
+                    blob = bucket.blob(blob_name)
+                    try:
+                        content = blob.download_as_text()
+                        reader = csv.DictReader(io.StringIO(content))
+                        for row in reader:
+                            android_downloads += int(row.get('Daily Device Installs', 0) or 0)
+                            android_uninstalls += int(row.get('Daily Device Uninstalls', 0) or 0)
+                        print(f"Loaded GCS report for {month_str}")
+                    except Exception as month_err:
+                        print(f"No report for {month_str}: {month_err}")
+                        continue  # skip missing months silently
+
             except Exception as e:
-                print(f"Error fetching GCS yearly report: {e}")
+                print(f"Error connecting to GCS: {e}")
 
         # --- 2. APPLE APP STORE CONNECT ---
         # Apple Sales API provides YEARLY reports via filter[frequency]=YEARLY
