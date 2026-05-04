@@ -1,10 +1,10 @@
 document.addEventListener('DOMContentLoaded', () => {
-    const syncAllBtn   = document.getElementById('sync-all-btn');
-    const lastUpdated  = document.getElementById('last-updated');
-    const yearlyTbody  = document.getElementById('yearly-tbody');
+    const syncAllBtn = document.getElementById('sync-all-btn');
+    const lastUpdated = document.getElementById('last-updated');
+    const yearlyTbody = document.getElementById('yearly-tbody');
 
-    let barChart    = null;
-    let donutChart  = null;
+    let barChart = null;
+    let donutChart = null;
 
     // ── Initial load ──────────────────────────────────────────
     fetchAll();
@@ -17,9 +17,9 @@ document.addEventListener('DOMContentLoaded', () => {
             try {
                 const [pubRes, privRes] = await Promise.all([
                     fetch('/api/sync/germania', { method: 'POST' }),
-                    fetch('/api/sync/private',  { method: 'POST' })
+                    fetch('/api/sync/private', { method: 'POST' })
                 ]);
-                if (!pubRes.ok)  { const e = await pubRes.json();  alert('Public sync failed: '  + (e.error || 'Unknown')); }
+                if (!pubRes.ok) { const e = await pubRes.json(); alert('Public sync failed: ' + (e.error || 'Unknown')); }
                 if (!privRes.ok) { const e = await privRes.json(); alert('Private sync failed: ' + (e.error || 'Unknown')); }
                 await fetchAll();
             } catch (err) {
@@ -48,21 +48,21 @@ document.addEventListener('DOMContentLoaded', () => {
     // ── KPI Cards ─────────────────────────────────────────────
     function renderKPIs(metrics) {
         const android = metrics.find(m => m.platform === 'Android') || {};
-        const ios     = metrics.find(m => m.platform === 'iOS')     || {};
+        const ios = metrics.find(m => m.platform === 'iOS') || {};
 
         const androidDl = android.downloads ?? null;
-        const iosDl     = ios.downloads     ?? null;
+        const iosDl = ios.downloads ?? null;
 
         set('kpi-android-downloads', androidDl !== null ? fmt(androidDl) + '+' : '—');
-        set('kpi-android-installs',  'Google Play Store');
-        set('kpi-ios-downloads',     iosDl !== null && iosDl > 0 ? fmt(iosDl) : 'N/A (Private API)');
+        set('kpi-android-installs', 'Google Play Store');
+        set('kpi-ios-downloads', iosDl !== null && iosDl > 0 ? fmt(iosDl) : 'N/A (Private API)');
 
         const aRating = android.rating ?? 0;
-        const iRating = ios.rating     ?? 0;
+        const iRating = ios.rating ?? 0;
         set('kpi-android-rating', aRating ? aRating.toFixed(1) : '—');
-        set('kpi-ios-rating',     iRating ? iRating.toFixed(1) : '—');
-        set('kpi-android-stars',  stars(aRating));
-        set('kpi-ios-stars',      stars(iRating));
+        set('kpi-ios-rating', iRating ? iRating.toFixed(1) : '—');
+        set('kpi-android-stars', stars(aRating));
+        set('kpi-ios-stars', stars(iRating));
     }
 
     // ── Yearly Table ──────────────────────────────────────────
@@ -82,29 +82,30 @@ document.addEventListener('DOMContentLoaded', () => {
                 ? '<svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor"><path d="M17.523 15.341a.5.5 0 1 1-.001 1 .5.5 0 0 1 .001-1m-11.046 0a.5.5 0 1 1-.001 1 .5.5 0 0 1 .001-1M17.7 9.6l1.8-3.1a.4.4 0 0 0-.7-.4l-1.8 3.1A10.8 10.8 0 0 0 12 8.3c-1.8 0-3.5.5-5 1.3L5.2 6.1a.4.4 0 1 0-.7.4l1.8 3.1C4 11 2.2 13.4 2 16.3h20c-.2-2.9-2-5.3-4.3-6.7"/></svg>'
                 : '<svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor"><path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.8-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11"/></svg>';
 
-            const retCell = retPct !== null
-                ? `<div class="retention-bar-wrap">
-                     <div class="retention-bar"><div class="retention-fill" style="width:${retPct}%"></div></div>
-                     <span class="retention-pct">${retPct}%</span>
-                   </div>`
-                : '<span style="color:#94a3b8">N/A</span>';
+            const isIos = m.platform === 'iOS';
+            const secondColVal = isIos
+                ? (m.subscriptions > 0
+                    ? `<span class="num">${fmt(m.subscriptions)}</span> <span style="color:#94a3b8;font-size:.75rem;">renewals</span>`
+                    : '<span style="color:#94a3b8">—</span>')
+                : (m.uninstalls > 0
+                    ? `<span class="num">${fmt(m.uninstalls)}</span>`
+                    : '<span style="color:#94a3b8">N/A</span>');
 
             return `<tr>
                 <td><span class="year-badge">${esc(m.year)}</span></td>
                 <td>${esc(m.app_name)}</td>
                 <td><span class="badge ${badgeClass}">${icon} ${esc(m.platform)}</span></td>
-                <td><span class="num">${fmt(m.downloads)}</span></td>
-                <td>${m.uninstalls > 0 ? '<span class="num">' + fmt(m.uninstalls) + '</span>' : '<span style="color:#94a3b8">N/A</span>'}</td>
-                <td>${retCell}</td>
+                <td><span class="num">${m.downloads > 0 ? fmt(m.downloads) : '⏳ Syncing…'}</span></td>
+                <td>${secondColVal}</td>
             </tr>`;
         }).join('');
     }
 
     // ── Bar Chart ─────────────────────────────────────────────
     function renderBarChart(metrics) {
-        const years   = [...new Set(metrics.map(m => m.year))].sort();
+        const years = [...new Set(metrics.map(m => m.year))].sort();
         const androidData = years.map(y => { const r = metrics.find(m => m.year === y && m.platform === 'Android'); return r ? r.downloads : 0; });
-        const iosData     = years.map(y => { const r = metrics.find(m => m.year === y && m.platform === 'iOS');     return r ? r.downloads : 0; });
+        const iosData = years.map(y => { const r = metrics.find(m => m.year === y && m.platform === 'iOS'); return r ? r.downloads : 0; });
 
         const ctx = document.getElementById('yearly-bar-chart')?.getContext('2d');
         if (!ctx) return;
@@ -150,9 +151,9 @@ document.addEventListener('DOMContentLoaded', () => {
     // ── Donut Chart ───────────────────────────────────────────
     function renderDonutChart(metrics) {
         const android = metrics.find(m => m.platform === 'Android');
-        const ios     = metrics.find(m => m.platform === 'iOS');
+        const ios = metrics.find(m => m.platform === 'iOS');
         const aDl = android?.downloads || 0;
-        const iDl = ios?.downloads     || 0;
+        const iDl = ios?.downloads || 0;
 
         const ctx = document.getElementById('platform-donut-chart')?.getContext('2d');
         if (!ctx) return;
@@ -186,11 +187,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // ── Helpers ───────────────────────────────────────────────
     function set(id, val) { const el = document.getElementById(id); if (el) el.innerHTML = val; }
-    function fmt(n)        { return new Intl.NumberFormat().format(n); }
-    function fmtShort(n)   { if (n >= 1e6) return (n/1e6).toFixed(1)+'M'; if (n >= 1e3) return (n/1e3).toFixed(0)+'K'; return n; }
-    function esc(s)        { if (!s) return ''; return s.toString().replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+    function fmt(n) { return new Intl.NumberFormat().format(n); }
+    function fmtShort(n) { if (n >= 1e6) return (n / 1e6).toFixed(1) + 'M'; if (n >= 1e3) return (n / 1e3).toFixed(0) + 'K'; return n; }
+    function esc(s) { if (!s) return ''; return s.toString().replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
     function stars(r) {
         const full = Math.round(r);
-        return Array.from({length:5}, (_,i) => i < full ? '⭐' : '☆').join('');
+        return Array.from({ length: 5 }, (_, i) => i < full ? '⭐' : '☆').join('');
     }
 });
