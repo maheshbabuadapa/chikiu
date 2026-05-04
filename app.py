@@ -385,4 +385,12 @@ def sync_private_data():
         return jsonify({"error": str(e)}), 500
 
 if __name__ == '__main__':
-    app.run(debug=True, port=5000)
+    import socket
+    hostname = socket.gethostname()
+    local_ip = socket.gethostbyname(hostname)
+    print(f"\n{'='*55}")
+    print(f"  Germania Mobile App Dashboard")
+    print(f"  Local:   http://127.0.0.1:5000")
+    print(f"  Network: http://{local_ip}:5000  ← share this with your team")
+    print(f"{'='*55}\n")
+    app.run(debug=False, host='0.0.0.0', port=5000)
