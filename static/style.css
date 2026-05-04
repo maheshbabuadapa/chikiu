@@ -153,4 +153,6 @@ body { font-family: 'Inter', sans-serif; background: var(--bg); color: var(--tex
     border-radius: 8px; padding: .2rem .65rem; font-weight: 700;
     font-size: .85rem; color: var(--text-h);
 }
-.pending-cell { color: var(--text-l); font-style: italic; font-size: .82rem; }
+.pending-cell { color: #f59e0b; font-style: italic; font-size: .82rem; font-weight: 500; }
+.na-cell      { color: #94a3b8; font-size: .78rem; font-style: italic; }
+.col-note     { font-weight: 400; font-size: .68rem; color: #94a3b8; text-transform: none; letter-spacing: 0; }

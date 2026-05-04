@@ -73,7 +73,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const ios     = metrics.find(m => m.platform === 'iOS')     || {};
 
         // Total (all-time) from app_metrics public data
-        set('kpi-android-total', android.downloads ? fmt(android.downloads) + '+' : '—');
+        set('kpi-android-total', android.downloads ? fmt(android.downloads) + '+' : 'Syncing...');
 
         // iOS total (from analytics API)
         const iosTotalDl = ios.downloads || 0;
@@ -83,20 +83,20 @@ document.addEventListener('DOMContentLoaded', () => {
         // Ratings
         const aR = android.rating || 0;
         const iR = ios.rating     || 0;
-        set('kpi-android-rating', aR ? aR.toFixed(1) : '—');
-        set('kpi-ios-rating',     iR ? iR.toFixed(1) : '—');
+        set('kpi-android-rating', aR ? aR.toFixed(1) : 'Not yet rated');
+        set('kpi-ios-rating',     iR ? iR.toFixed(1) : 'Not yet rated');
         set('kpi-android-stars',  stars(aR));
         set('kpi-ios-stars',      stars(iR));
 
         // YTD (current year from yearly_metrics)
         const aYTD = yearly.find(m => m.platform === 'Android' && m.year === currentYear);
         const iYTD = yearly.find(m => m.platform === 'iOS'     && m.year === currentYear);
-        set('kpi-android-ytd', aYTD?.downloads > 0 ? fmt(aYTD.downloads) : '—');
+        set('kpi-android-ytd', aYTD?.downloads > 0 ? fmt(aYTD.downloads) : 'Click Sync All Data');
         set('kpi-ios-ytd',     iYTD?.downloads > 0 ? fmt(iYTD.downloads) : '⏳ Pending');
 
         // iOS subscription renewals
         const iSubs = iYTD?.subscriptions || 0;
-        set('kpi-ios-subs', iSubs > 0 ? fmt(iSubs) : '—');
+        set('kpi-ios-subs', iSubs > 0 ? fmt(iSubs) : 'Click Sync All Data');
     }
 
     // ── Table ─────────────────────────────────────────────────
@@ -114,15 +114,21 @@ document.addEventListener('DOMContentLoaded', () => {
 
             const dlCell = m.downloads > 0
                 ? `<span class="num">${fmt(m.downloads)}</span>`
-                : '<span class="pending-cell">⏳ Pending — ready tomorrow</span>';
+                : '<span class="pending-cell">⏳ Syncing — available tomorrow</span>';
 
-            const uninstallCell = !isIos && m.uninstalls > 0
-                ? `<span class="num">${fmt(m.uninstalls)}</span>`
-                : (isIos ? '—' : '<span style="color:#94a3b8">N/A</span>');
+            // Uninstalls: Android tracks this, Apple does not provide this data
+            const uninstallCell = isIos
+                ? '<span class="na-cell">Not tracked by Apple</span>'
+                : (m.uninstalls > 0
+                    ? `<span class="num">${fmt(m.uninstalls)}</span>`
+                    : '<span class="na-cell">No data available</span>');
 
-            const subsCell = isIos && m.subscriptions > 0
-                ? `<span class="num">${fmt(m.subscriptions)}</span>`
-                : (isIos ? '<span style="color:#94a3b8">—</span>' : '—');
+            // Policy renewals: iOS-only metric from Apple Sales API (subscription type 7F)
+            const subsCell = isIos
+                ? (m.subscriptions > 0
+                    ? `<span class="num">${fmt(m.subscriptions)}</span>`
+                    : '<span class="na-cell">No subscription data</span>')
+                : '<span class="na-cell">Android metric — not applicable</span>';
 
             return `<tr>
                 <td><span class="year-badge">${esc(m.year)}</span></td>
