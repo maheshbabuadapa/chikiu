@@ -27,13 +27,14 @@ def init_db():
             )
         ''')
         cursor.execute('''
-            CREATE TABLE IF NOT EXISTS monthly_metrics (
+            CREATE TABLE IF NOT EXISTS yearly_metrics (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 app_name TEXT NOT NULL,
                 platform TEXT NOT NULL,
-                month_year TEXT NOT NULL,
+                year TEXT NOT NULL,
                 downloads INTEGER NOT NULL,
-                uninstalls INTEGER NOT NULL
+                uninstalls INTEGER NOT NULL,
+                UNIQUE(app_name, platform, year)
             )
         ''')
         conn.commit()
@@ -111,12 +112,12 @@ def sync_germania():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-@app.route('/api/metrics/monthly', methods=['GET'])
-def get_monthly_metrics():
+@app.route('/api/metrics/yearly', methods=['GET'])
+def get_yearly_metrics():
     with sqlite3.connect(DB_NAME) as conn:
         conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
-        cursor.execute('SELECT * FROM monthly_metrics ORDER BY month_year DESC')
+        cursor.execute('SELECT * FROM yearly_metrics ORDER BY year DESC')
         rows = cursor.fetchall()
         
         metrics = []
@@ -125,7 +126,7 @@ def get_monthly_metrics():
                 'id': row['id'],
                 'app_name': row['app_name'],
                 'platform': row['platform'],
-                'month_year': row['month_year'],
+                'year': row['year'],
                 'downloads': row['downloads'],
                 'uninstalls': row['uninstalls']
             })
@@ -134,37 +135,46 @@ def get_monthly_metrics():
 @app.route('/api/sync/private', methods=['POST'])
 def sync_private_data():
     try:
-        current_month = datetime.now().strftime('%Y-%m')
-        
+        current_year = datetime.now().strftime('%Y')
+
         android_downloads = 0
         android_uninstalls = 0
         ios_downloads = 0
         ios_uninstalls = 0
 
         # --- 1. GOOGLE PLAY CONSOLE ---
-        # Note: This is skeleton code. In reality you must parse the specific CSV format.
+        # Google Play Console exports yearly install/uninstall reports to a GCS bucket.
+        # The report filename format is: installs_com.germania.mobile.app_YYYY_overview.csv
         bucket_name = os.environ.get('GOOGLE_PLAY_BUCKET_ID')
         if bucket_name and os.environ.get('GOOGLE_APPLICATION_CREDENTIALS'):
             try:
+                import io, csv
                 storage_client = storage.Client()
                 bucket = storage_client.bucket(bucket_name)
-                # Find the latest report (e.g. installs_com.germania.mobile.app_YYYYMM_overview.csv)
-                # For demonstration, we simulate parsing a downloaded CSV
-                android_downloads = 1200 # Simulated data
-                android_uninstalls = 300 # Simulated data
+                # Download the yearly overview CSV for the current year
+                blob_name = f"stats/installs/installs_com.germania.mobile.app_{current_year}_overview.csv"
+                blob = bucket.blob(blob_name)
+                content = blob.download_as_text()
+                reader = csv.DictReader(io.StringIO(content))
+                for row in reader:
+                    android_downloads += int(row.get('Daily Device Installs', 0) or 0)
+                    android_uninstalls += int(row.get('Daily Device Uninstalls', 0) or 0)
             except Exception as e:
-                print(f"Error fetching GCS: {e}")
+                print(f"Error fetching GCS yearly report: {e}")
 
         # --- 2. APPLE APP STORE CONNECT ---
+        # Apple Sales API provides YEARLY reports via filter[frequency]=YEARLY
         issuer_id = os.environ.get('APPLE_ISSUER_ID')
         key_id = os.environ.get('APPLE_KEY_ID')
         key_path = os.environ.get('APPLE_PRIVATE_KEY_PATH')
-        
-        if issuer_id and key_id and key_path and os.path.exists(key_path):
+        vendor_number = os.environ.get('APPLE_VENDOR_NUMBER')
+
+        if issuer_id and key_id and key_path and vendor_number and os.path.exists(key_path):
             try:
+                import gzip, io as sysio
                 with open(key_path, 'r') as f:
                     private_key = f.read()
-                    
+
                 token = jwt.encode(
                     {
                         "iss": issuer_id,
@@ -175,39 +185,70 @@ def sync_private_data():
                     algorithm="ES256",
                     headers={"kid": key_id}
                 )
-                # Call Apple Sales API
-                # url = f"https://api.appstoreconnect.apple.com/v1/salesReports?filter[frequency]=MONTHLY&filter[reportSubType]=SUMMARY&filter[reportType]=SALES&filter[vendorNumber]=YOUR_VENDOR"
-                # headers = {'Authorization': f'Bearer {token}'}
-                # response = requests.get(url, headers=headers)
-                
-                # For demonstration, we simulate parsing the downloaded report
-                ios_downloads = 850 # Simulated data
-                ios_uninstalls = 0  # Apple doesn't typically provide uninstalls in this report
+                # Request yearly SALES report from Apple
+                url = (
+                    f"https://api.appstoreconnect.apple.com/v1/salesReports"
+                    f"?filter[frequency]=YEARLY"
+                    f"&filter[reportSubType]=SUMMARY"
+                    f"&filter[reportType]=SALES"
+                    f"&filter[vendorNumber]={vendor_number}"
+                    f"&filter[reportDate]={current_year}"
+                )
+                headers = {'Authorization': f'Bearer {token}'}
+                response = requests.get(url, headers=headers)
+                if response.status_code == 200:
+                    # Apple returns gzipped TSV
+                    data = gzip.decompress(response.content).decode('utf-8')
+                    import csv
+                    reader = csv.DictReader(sysio.StringIO(data), delimiter='\t')
+                    for row in reader:
+                        units = int(row.get('Units', 0) or 0)
+                        product_type = row.get('Product Type Identifier', '')
+                        if product_type in ('1', '1F', '1T'):  # Free/paid app downloads
+                            ios_downloads += units
+                else:
+                    print(f"Apple API error {response.status_code}: {response.text}")
             except Exception as e:
-                print(f"Error fetching App Store Connect: {e}")
+                print(f"Error fetching App Store Connect yearly report: {e}")
 
-        # --- 3. SAVE TO DB ---
+        # --- 3. SAVE TO yearly_metrics TABLE ---
         with sqlite3.connect(DB_NAME) as conn:
             cursor = conn.cursor()
-            
-            def upsert_monthly(app_name, platform, month, downloads, uninstalls):
-                cursor.execute('SELECT id FROM monthly_metrics WHERE app_name = ? AND platform = ? AND month_year = ?', (app_name, platform, month))
+
+            def upsert_yearly(app_name, platform, year, downloads, uninstalls):
+                cursor.execute(
+                    'SELECT id FROM yearly_metrics WHERE app_name = ? AND platform = ? AND year = ?',
+                    (app_name, platform, year)
+                )
                 row = cursor.fetchone()
                 if row:
-                    cursor.execute('''
-                        UPDATE monthly_metrics SET downloads = ?, uninstalls = ? WHERE id = ?
-                    ''', (downloads, uninstalls, row[0]))
+                    cursor.execute(
+                        'UPDATE yearly_metrics SET downloads = ?, uninstalls = ? WHERE id = ?',
+                        (downloads, uninstalls, row[0])
+                    )
                 else:
-                    cursor.execute('''
-                        INSERT INTO monthly_metrics (app_name, platform, month_year, downloads, uninstalls)
-                        VALUES (?, ?, ?, ?, ?)
-                    ''', (app_name, platform, month, downloads, uninstalls))
+                    cursor.execute(
+                        'INSERT INTO yearly_metrics (app_name, platform, year, downloads, uninstalls) VALUES (?, ?, ?, ?, ?)',
+                        (app_name, platform, year, downloads, uninstalls)
+                    )
 
-            upsert_monthly("Germania Insurance", "Android", current_month, android_downloads, android_uninstalls)
-            upsert_monthly("Germania Insurance", "iOS", current_month, ios_downloads, ios_uninstalls)
+            upsert_yearly("Germania Insurance", "Android", current_year, android_downloads, android_uninstalls)
+            upsert_yearly("Germania Insurance", "iOS", current_year, ios_downloads, ios_uninstalls)
+
+            # Aggregate total iOS downloads across all years and update the Current Metrics card
+            cursor.execute(
+                'SELECT SUM(downloads) FROM yearly_metrics WHERE platform = "iOS" AND app_name = "Germania Insurance"'
+            )
+            row = cursor.fetchone()
+            total_ios = row[0] if row and row[0] is not None else 0
+            cursor.execute(
+                'UPDATE app_metrics SET downloads = ? WHERE platform = "iOS" AND app_name = "Germania Insurance"',
+                (total_ios,)
+            )
+
             conn.commit()
 
-        return jsonify({"message": "Private data synced successfully"}), 200
+        return jsonify({"message": "Private yearly data synced successfully"}), 200
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
