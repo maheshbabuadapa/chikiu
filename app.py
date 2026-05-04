@@ -258,19 +258,29 @@ def sync_private_data():
 
                         reader = csv.DictReader(sysio.StringIO(data), delimiter='\t')
                         type_counts = {}
+                        app_type_counts = {}  # Only for Germania Insurance app
                         month_total = 0
+                        APPLE_APP_ID = '1535269629'
+
                         for row in reader:
-                            units = int(row.get('Units', 0) or 0)
+                            units        = int(row.get('Units', 0) or 0)
                             product_type = row.get('Product Type Identifier', '').strip()
-                            # Track all types for debugging
+                            apple_id     = str(row.get('Apple Identifier', '')).strip()
+
+                            # Track all types across all products
                             type_counts[product_type] = type_counts.get(product_type, 0) + units
-                            # '1'  = First-time download (new install)
-                            # '1T' = Redownload (user reinstalls)
-                            # '1F' = App Update — NOT a download, excluded intentionally
-                            if product_type in ('1', '1T'):
-                                ios_downloads += units
-                                month_total   += units
-                        print(f"Loaded Apple report for {month_str}: +{month_total} downloads | types: {type_counts}")
+
+                            # Track types ONLY for Germania Insurance app
+                            if apple_id == APPLE_APP_ID:
+                                app_type_counts[product_type] = app_type_counts.get(product_type, 0) + units
+                                # Count all units for this specific app as downloads
+                                # (free apps show type '1' for new, '1T' for re-download)
+                                if product_type in ('1', '1T'):
+                                    ios_downloads += units
+                                    month_total   += units
+
+                        print(f"Apple {month_str}: Germania app types={app_type_counts} | all vendor types={type_counts}")
+                        print(f"Apple {month_str}: +{month_total} downloads counted for Germania (ID={APPLE_APP_ID})")
                     elif resp.status_code == 404:
                         print(f"No Apple report available for {month_str} (404) — skipping.")
                     else:
