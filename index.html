@@ -1,164 +1,167 @@
 <!DOCTYPE html>
 <html lang="en">
-
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Germania Mobile App Metrics Dashboard</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap"
-        rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 </head>
-
 <body>
-    <div class="page-wrapper">
+<div class="page-wrapper">
 
-        <!-- Header -->
-        <header class="header">
-            <div class="header-left">
-                <div class="logo-badge">G</div>
-                <div>
-                    <h1 class="header-title">Germania Mobile App</h1>
-                    <p class="header-sub">Performance Metrics Dashboard</p>
+    <!-- Header -->
+    <header class="header">
+        <div class="header-left">
+            <div class="logo-badge">G</div>
+            <div>
+                <h1 class="header-title">Germania Mobile App</h1>
+                <p class="header-sub">Performance Metrics Dashboard</p>
+            </div>
+        </div>
+        <div class="header-right">
+            <span id="last-updated" class="last-updated">Last updated: —</span>
+            <button id="sync-all-btn" class="btn-sync">
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16" style="margin-right:6px;vertical-align:-2px"><path d="M11.534 7h3.932a.25.25 0 0 1 .192.41l-1.966 2.36a.25.25 0 0 1-.384 0l-1.966-2.36a.25.25 0 0 1 .192-.41zm-11 2h3.932a.25.25 0 0 0 .192-.41L2.692 6.23a.25.25 0 0 0-.384 0L.342 8.59A.25.25 0 0 0 .534 9z"/><path fill-rule="evenodd" d="M8 3c-1.552 0-2.94.707-3.857 1.818a.5.5 0 1 1-.771-.636A6.002 6.002 0 0 1 13.917 7H12.9A5.002 5.002 0 0 0 8 3zM3.1 9a5.002 5.002 0 0 0 7.757 2.209l.746.746A6.002 6.002 0 0 1 2.083 9H3.1z"/></svg>
+                Sync All Data
+            </button>
+        </div>
+    </header>
+
+    <main class="main-content">
+
+        <!-- Section: App Store Performance -->
+        <div class="section-label">📊 App Store Performance</div>
+        <section class="kpi-grid">
+            <div class="kpi-card">
+                <div class="kpi-icon android-icon">
+                    <svg viewBox="0 0 24 24" width="26" height="26" fill="white"><path d="M17.523 15.341a.5.5 0 1 1-.001 1 .5.5 0 0 1 .001-1m-11.046 0a.5.5 0 1 1-.001 1 .5.5 0 0 1 .001-1M17.7 9.6l1.8-3.1a.4.4 0 0 0-.7-.4l-1.8 3.1A10.8 10.8 0 0 0 12 8.3c-1.8 0-3.5.5-5 1.3L5.2 6.1a.4.4 0 1 0-.7.4l1.8 3.1C4 11 2.2 13.4 2 16.3h20c-.2-2.9-2-5.3-4.3-6.7"/></svg>
+                </div>
+                <div class="kpi-body">
+                    <div class="kpi-label">Total Android Downloads</div>
+                    <div class="kpi-value" id="kpi-android-total">—</div>
+                    <div class="kpi-note">All-time · Google Play Store</div>
                 </div>
             </div>
-            <div class="header-right">
-                <span id="last-updated" class="last-updated">Last updated: —</span>
-                <button id="sync-all-btn" class="btn-sync">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor"
-                        viewBox="0 0 16 16" style="margin-right:6px;vertical-align:-2px">
-                        <path
-                            d="M11.534 7h3.932a.25.25 0 0 1 .192.41l-1.966 2.36a.25.25 0 0 1-.384 0l-1.966-2.36a.25.25 0 0 1 .192-.41zm-11 2h3.932a.25.25 0 0 0 .192-.41L2.692 6.23a.25.25 0 0 0-.384 0L.342 8.59A.25.25 0 0 0 .534 9z" />
-                        <path fill-rule="evenodd"
-                            d="M8 3c-1.552 0-2.94.707-3.857 1.818a.5.5 0 1 1-.771-.636A6.002 6.002 0 0 1 13.917 7H12.9A5.002 5.002 0 0 0 8 3zM3.1 9a5.002 5.002 0 0 0 7.757 2.209l.746.746A6.002 6.002 0 0 1 2.083 9H3.1z" />
-                    </svg>
-                    Sync All Data
-                </button>
+
+            <div class="kpi-card">
+                <div class="kpi-icon ios-icon">
+                    <svg viewBox="0 0 24 24" width="26" height="26" fill="white"><path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.8-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11"/></svg>
+                </div>
+                <div class="kpi-body">
+                    <div class="kpi-label">Total iOS Downloads</div>
+                    <div class="kpi-value" id="kpi-ios-total">⏳</div>
+                    <div class="kpi-note" id="kpi-ios-note">Analytics API · ready tomorrow</div>
+                </div>
             </div>
-        </header>
 
-        <main class="main-content">
-
-            <!-- KPI Cards Row -->
-            <section class="kpi-grid">
-                <div class="kpi-card kpi-android">
-                    <div class="kpi-icon android-icon">
-                        <svg viewBox="0 0 24 24" width="28" height="28" fill="white">
-                            <path
-                                d="M17.523 15.341a.5.5 0 1 1-.001 1 .5.5 0 0 1 .001-1m-11.046 0a.5.5 0 1 1-.001 1 .5.5 0 0 1 .001-1M17.7 9.6l1.8-3.1a.4.4 0 0 0-.7-.4l-1.8 3.1A10.8 10.8 0 0 0 12 8.3c-1.8 0-3.5.5-5 1.3L5.2 6.1a.4.4 0 1 0-.7.4l1.8 3.1C4 11 2.2 13.4 2 16.3h20c-.2-2.9-2-5.3-4.3-6.7" />
-                        </svg>
-                    </div>
-                    <div class="kpi-body">
-                        <div class="kpi-label">Android Downloads</div>
-                        <div class="kpi-value" id="kpi-android-downloads">—</div>
-                        <div class="kpi-sub" id="kpi-android-installs">Google Play Store</div>
-                    </div>
+            <div class="kpi-card">
+                <div class="kpi-icon rating-icon">
+                    <svg viewBox="0 0 24 24" width="26" height="26" fill="white"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
                 </div>
-
-                <div class="kpi-card kpi-ios">
-                    <div class="kpi-icon ios-icon">
-                        <svg viewBox="0 0 24 24" width="28" height="28" fill="white">
-                            <path
-                                d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.8-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11" />
-                        </svg>
-                    </div>
-                    <div class="kpi-body">
-                        <div class="kpi-label">iOS Downloads</div>
-                        <div class="kpi-value" id="kpi-ios-downloads">—</div>
-                        <div class="kpi-sub">Apple App Store</div>
-                    </div>
+                <div class="kpi-body">
+                    <div class="kpi-label">Android Rating</div>
+                    <div class="kpi-value" id="kpi-android-rating">—</div>
+                    <div class="kpi-note" id="kpi-android-stars"></div>
                 </div>
+            </div>
 
-                <div class="kpi-card kpi-rating-android">
-                    <div class="kpi-icon rating-icon">
-                        <svg viewBox="0 0 24 24" width="28" height="28" fill="white">
-                            <path
-                                d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
-                        </svg>
-                    </div>
-                    <div class="kpi-body">
-                        <div class="kpi-label">Android Rating</div>
-                        <div class="kpi-value" id="kpi-android-rating">—</div>
-                        <div class="kpi-stars" id="kpi-android-stars"></div>
-                    </div>
+            <div class="kpi-card">
+                <div class="kpi-icon rating-icon-ios">
+                    <svg viewBox="0 0 24 24" width="26" height="26" fill="white"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
                 </div>
-
-                <div class="kpi-card kpi-rating-ios">
-                    <div class="kpi-icon rating-icon-ios">
-                        <svg viewBox="0 0 24 24" width="28" height="28" fill="white">
-                            <path
-                                d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
-                        </svg>
-                    </div>
-                    <div class="kpi-body">
-                        <div class="kpi-label">iOS Rating</div>
-                        <div class="kpi-value" id="kpi-ios-rating">—</div>
-                        <div class="kpi-stars" id="kpi-ios-stars"></div>
-                    </div>
+                <div class="kpi-body">
+                    <div class="kpi-label">iOS Rating</div>
+                    <div class="kpi-value" id="kpi-ios-rating">—</div>
+                    <div class="kpi-note" id="kpi-ios-stars"></div>
                 </div>
-            </section>
+            </div>
+        </section>
 
-            <!-- Charts Row -->
-            <section class="charts-grid">
-                <div class="chart-card">
-                    <div class="chart-card-header">
-                        <div>
-                            <h2 class="chart-title">Yearly Downloads by Platform</h2>
-                            <p class="chart-sub">Year-over-year download comparison</p>
-                        </div>
-                    </div>
-                    <div class="chart-wrapper">
-                        <canvas id="yearly-bar-chart"></canvas>
-                    </div>
+        <!-- Section: Year-to-Date Downloads -->
+        <div class="section-label">📅 <span id="current-year-label">2026</span> Year-to-Date Downloads</div>
+        <section class="kpi-grid kpi-grid-2">
+            <div class="kpi-card kpi-accent-android">
+                <div class="kpi-body">
+                    <div class="kpi-label">Android Downloads (YTD)</div>
+                    <div class="kpi-value" id="kpi-android-ytd">—</div>
+                    <div class="kpi-note">Jan 1 – today · via Google Play private data</div>
                 </div>
-
-                <div class="chart-card">
-                    <div class="chart-card-header">
-                        <div>
-                            <h2 class="chart-title">Platform Distribution</h2>
-                            <p class="chart-sub">Downloads split by platform</p>
-                        </div>
-                    </div>
-                    <div class="chart-wrapper donut-wrapper">
-                        <canvas id="platform-donut-chart"></canvas>
-                    </div>
+            </div>
+            <div class="kpi-card kpi-accent-ios">
+                <div class="kpi-body">
+                    <div class="kpi-label">iOS Downloads (YTD)</div>
+                    <div class="kpi-value" id="kpi-ios-ytd">⏳</div>
+                    <div class="kpi-note">Jan 1 – today · Analytics API ready tomorrow</div>
                 </div>
-            </section>
+            </div>
+        </section>
 
-            <!-- Yearly Data Table -->
-            <section class="table-card">
-                <div class="table-card-header">
-                    <div>
-                        <h2 class="chart-title">Yearly Download Report</h2>
-                        <p class="chart-sub">Detailed breakdown by year and platform</p>
-                    </div>
+        <!-- Section: Charts -->
+        <div class="section-label">📈 Yearly Trend</div>
+        <section class="charts-grid">
+            <div class="chart-card">
+                <div class="chart-card-header">
+                    <h2 class="chart-title">Downloads by Year — Android vs iOS</h2>
+                    <p class="chart-sub">Year-over-year comparison</p>
                 </div>
-                <div style="overflow-x: auto;">
-                    <table class="data-table">
-                        <thead>
-                            <tr>
-                                <th>Year</th>
-                                <th>App Name</th>
-                                <th>Platform</th>
-                                <th>Downloads</th>
-                                <th>iOS Subscriptions / Android Uninstalls</th>
-                                <th>Edit</th>
-                            </tr>
-                        </thead>
-                        <tbody id="yearly-tbody">
-                            <tr>
-                                <td colspan="6" class="table-empty">No data yet — click Sync All Data to populate.</td>
-                            </tr>
-                        </tbody>
-                    </table>
+                <div class="chart-wrapper"><canvas id="yearly-bar-chart"></canvas></div>
+            </div>
+            <div class="chart-card">
+                <div class="chart-card-header">
+                    <h2 class="chart-title">Platform Split</h2>
+                    <p class="chart-sub">Downloads by platform</p>
                 </div>
-            </section>
+                <div class="chart-wrapper donut-wrapper"><canvas id="platform-donut-chart"></canvas></div>
+            </div>
+        </section>
 
-        </main>
-    </div>
+        <!-- Section: iOS Subscription Renewals -->
+        <div class="section-label">🔄 iOS Policy Subscription Renewals (YTD)
+            <span class="section-badge">from Apple Sales API</span>
+        </div>
+        <div class="info-banner">
+            <strong>What is this?</strong> Every time a Germania Insurance subscriber renews their insurance policy through the iOS app, Apple records it as a subscription renewal event. This number shows how many policy renewals happened via the iOS app in <span id="renewals-year">2026</span>.
+        </div>
+        <section class="kpi-grid kpi-grid-1">
+            <div class="kpi-card kpi-accent-sub">
+                <div class="kpi-body">
+                    <div class="kpi-label">iOS Policy Renewals (YTD)</div>
+                    <div class="kpi-value" id="kpi-ios-subs">—</div>
+                    <div class="kpi-note">Auto-renewable subscription events via Apple Sales API</div>
+                </div>
+            </div>
+        </section>
 
-    <script src="{{ url_for('static', filename='script.js') }}"></script>
+        <!-- Section: Yearly Report Table -->
+        <div class="section-label">📋 Annual Summary Table</div>
+        <section class="table-card">
+            <div class="table-card-header">
+                <h2 class="chart-title">Yearly Download Summary</h2>
+                <p class="chart-sub">Year-by-year breakdown. iOS Downloads will auto-populate after Apple Analytics API is ready (within 24 hours of first sync).</p>
+            </div>
+            <div style="overflow-x:auto;">
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th>Year</th>
+                            <th>Platform</th>
+                            <th>Downloads</th>
+                            <th>Uninstalls (Android)</th>
+                            <th>Policy Renewals (iOS)</th>
+                        </tr>
+                    </thead>
+                    <tbody id="yearly-tbody">
+                        <tr><td colspan="5" class="table-empty">Click Sync All Data to load.</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </section>
+
+    </main>
+</div>
+
+<script src="{{ url_for('static', filename='script.js') }}"></script>
 </body>
-
 </html>
