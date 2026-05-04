@@ -1,5 +1,6 @@
 document.addEventListener('DOMContentLoaded', () => {
     const syncAllBtn  = document.getElementById('sync-all-btn');
+    const syncHistBtn = document.getElementById('sync-hist-btn');
     const lastUpdated = document.getElementById('last-updated');
     const yearlyTbody = document.getElementById('yearly-tbody');
     let barChart = null, donutChart = null;
@@ -12,7 +13,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     fetchAll();
 
-    // ── Sync button ───────────────────────────────────────────
+    // ── Sync All (current year) ───────────────────────────────
     if (syncAllBtn) {
         syncAllBtn.addEventListener('click', async () => {
             syncAllBtn.textContent = 'Syncing…';
@@ -29,6 +30,26 @@ document.addEventListener('DOMContentLoaded', () => {
             } finally {
                 syncAllBtn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16" style="margin-right:6px;vertical-align:-2px"><path d="M11.534 7h3.932a.25.25 0 0 1 .192.41l-1.966 2.36a.25.25 0 0 1-.384 0l-1.966-2.36a.25.25 0 0 1 .192-.41zm-11 2h3.932a.25.25 0 0 0 .192-.41L2.692 6.23a.25.25 0 0 0-.384 0L.342 8.59A.25.25 0 0 0 .534 9z"/><path fill-rule="evenodd" d="M8 3c-1.552 0-2.94.707-3.857 1.818a.5.5 0 1 1-.771-.636A6.002 6.002 0 0 1 13.917 7H12.9A5.002 5.002 0 0 0 8 3zM3.1 9a5.002 5.002 0 0 0 7.757 2.209l.746.746A6.002 6.002 0 0 1 2.083 9H3.1z"/></svg>Sync All Data`;
                 syncAllBtn.disabled = false;
+            }
+        });
+    }
+
+    // ── Sync Historical (2020–2025) ───────────────────────────
+    if (syncHistBtn) {
+        syncHistBtn.addEventListener('click', async () => {
+            if (!confirm('This will pull 2020–2025 data from Google Play and Apple. It may take 1–2 minutes. Continue?')) return;
+            syncHistBtn.textContent = '⏳ Loading historical…';
+            syncHistBtn.disabled = true;
+            try {
+                const resp = await fetch('/api/sync/historical', { method: 'POST' });
+                const data = await resp.json();
+                await fetchAll();
+                alert('Historical data loaded successfully! ' + (data.message || ''));
+            } catch (err) {
+                alert('Historical sync error — check Flask console.');
+            } finally {
+                syncHistBtn.textContent = '📅 Sync Historical';
+                syncHistBtn.disabled = false;
             }
         });
     }

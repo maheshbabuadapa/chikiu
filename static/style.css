@@ -41,6 +41,11 @@ body { font-family: 'Inter', sans-serif; background: var(--bg); color: var(--tex
 .btn-sync:hover  { opacity: .9; }
 .btn-sync:active { transform: scale(.97); }
 .btn-sync:disabled { opacity: .6; cursor: not-allowed; }
+.btn-sync-secondary {
+    background: var(--surface); color: #6366f1;
+    border: 1.5px solid #c7d2fe;
+}
+.btn-sync-secondary:hover { background: #eef2ff; }
 
 /* Layout */
 .main-content { padding: 2rem 2.5rem 3rem; max-width: 1300px; margin: 0 auto; }
