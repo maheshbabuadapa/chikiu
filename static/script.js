@@ -1,155 +1,196 @@
 document.addEventListener('DOMContentLoaded', () => {
-    const metricsGrid = document.getElementById('metrics-grid');
+    const syncAllBtn   = document.getElementById('sync-all-btn');
+    const lastUpdated  = document.getElementById('last-updated');
+    const yearlyTbody  = document.getElementById('yearly-tbody');
 
-    const syncAllBtn = document.getElementById('sync-all-btn');
-    const yearlyTbody = document.getElementById('yearly-tbody');
+    let barChart    = null;
+    let donutChart  = null;
 
-    // Fetch and display metrics on load
-    fetchMetrics();
-    fetchYearlyMetrics();
+    // ── Initial load ──────────────────────────────────────────
+    fetchAll();
 
+    // ── Sync button ───────────────────────────────────────────
     if (syncAllBtn) {
         syncAllBtn.addEventListener('click', async () => {
-            syncAllBtn.textContent = 'Syncing...';
+            syncAllBtn.textContent = 'Syncing…';
             syncAllBtn.disabled = true;
             try {
-                // Run both sync operations concurrently
-                const [publicResponse, privateResponse] = await Promise.all([
+                const [pubRes, privRes] = await Promise.all([
                     fetch('/api/sync/germania', { method: 'POST' }),
-                    fetch('/api/sync/private', { method: 'POST' })
+                    fetch('/api/sync/private',  { method: 'POST' })
                 ]);
-                
-                let successMessage = "";
-                let errorMessage = "";
-                
-                if (publicResponse.ok && privateResponse.ok) {
-                    successMessage = "All data synced successfully.";
-                } else {
-                    if (!publicResponse.ok) {
-                        const err = await publicResponse.json();
-                        errorMessage += "Public Sync Failed: " + (err.error || "Unknown error") + "\n";
-                    }
-                    if (!privateResponse.ok) {
-                        const err = await privateResponse.json();
-                        errorMessage += "Private Sync Failed: " + (err.error || "Unknown error") + "\n";
-                    }
-                }
-                
-                await Promise.all([fetchMetrics(), fetchYearlyMetrics()]);
-                
-                if (errorMessage) {
-                    alert(errorMessage);
-                } else if (successMessage) {
-                    alert(successMessage);
-                }
-            } catch (error) {
-                console.error("Error syncing data:", error);
-                alert("Error syncing data.");
+                if (!pubRes.ok)  { const e = await pubRes.json();  alert('Public sync failed: '  + (e.error || 'Unknown')); }
+                if (!privRes.ok) { const e = await privRes.json(); alert('Private sync failed: ' + (e.error || 'Unknown')); }
+                await fetchAll();
+            } catch (err) {
+                console.error(err);
+                alert('Sync error — check the Flask console for details.');
             } finally {
-                syncAllBtn.textContent = 'Sync All Data';
+                syncAllBtn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16" style="margin-right:6px;vertical-align:-2px"><path d="M11.534 7h3.932a.25.25 0 0 1 .192.41l-1.966 2.36a.25.25 0 0 1-.384 0l-1.966-2.36a.25.25 0 0 1 .192-.41zm-11 2h3.932a.25.25 0 0 0 .192-.41L2.692 6.23a.25.25 0 0 0-.384 0L.342 8.59A.25.25 0 0 0 .534 9z"/><path fill-rule="evenodd" d="M8 3c-1.552 0-2.94.707-3.857 1.818a.5.5 0 1 1-.771-.636A6.002 6.002 0 0 1 13.917 7H12.9A5.002 5.002 0 0 0 8 3zM3.1 9a5.002 5.002 0 0 0 7.757 2.209l.746.746A6.002 6.002 0 0 1 2.083 9H3.1z"/></svg>Sync All Data`;
                 syncAllBtn.disabled = false;
             }
         });
     }
 
-
-    async function fetchMetrics() {
-        try {
-            const response = await fetch('/api/metrics');
-            const metrics = await response.json();
-            renderMetrics(metrics);
-        } catch (error) {
-            console.error("Error fetching metrics:", error);
-            metricsGrid.innerHTML = '<p style="color: red;">Error loading metrics.</p>';
-        }
+    // ── Fetch both APIs and render ────────────────────────────
+    async function fetchAll() {
+        const [metrics, yearly] = await Promise.all([
+            fetch('/api/metrics').then(r => r.json()),
+            fetch('/api/metrics/yearly').then(r => r.json())
+        ]);
+        renderKPIs(metrics);
+        renderYearlyTable(yearly);
+        renderBarChart(yearly);
+        renderDonutChart(metrics);
+        lastUpdated.textContent = 'Last updated: ' + new Date().toLocaleString();
     }
 
-    async function fetchYearlyMetrics() {
-        try {
-            const response = await fetch('/api/metrics/yearly');
-            const metrics = await response.json();
-            renderYearlyMetrics(metrics);
-        } catch (error) {
-            console.error("Error fetching yearly metrics:", error);
-            if (yearlyTbody) yearlyTbody.innerHTML = '<tr><td colspan="5" style="padding: 1rem; color: red;">Error loading yearly data.</td></tr>';
-        }
+    // ── KPI Cards ─────────────────────────────────────────────
+    function renderKPIs(metrics) {
+        const android = metrics.find(m => m.platform === 'Android') || {};
+        const ios     = metrics.find(m => m.platform === 'iOS')     || {};
+
+        const androidDl = android.downloads ?? null;
+        const iosDl     = ios.downloads     ?? null;
+
+        set('kpi-android-downloads', androidDl !== null ? fmt(androidDl) + '+' : '—');
+        set('kpi-android-installs',  'Google Play Store');
+        set('kpi-ios-downloads',     iosDl !== null && iosDl > 0 ? fmt(iosDl) : 'N/A (Private API)');
+
+        const aRating = android.rating ?? 0;
+        const iRating = ios.rating     ?? 0;
+        set('kpi-android-rating', aRating ? aRating.toFixed(1) : '—');
+        set('kpi-ios-rating',     iRating ? iRating.toFixed(1) : '—');
+        set('kpi-android-stars',  stars(aRating));
+        set('kpi-ios-stars',      stars(iRating));
     }
 
-    function renderYearlyMetrics(metrics) {
+    // ── Yearly Table ──────────────────────────────────────────
+    function renderYearlyTable(metrics) {
         if (!yearlyTbody) return;
-        yearlyTbody.innerHTML = '';
-
-        if (metrics.length === 0) {
-            yearlyTbody.innerHTML = '<tr><td colspan="5" style="padding: 2rem; text-align: center; color: var(--text-muted);">No yearly data yet. Click "Sync All Data" to populate this table.</td></tr>';
+        if (!metrics.length) {
+            yearlyTbody.innerHTML = '<tr><td colspan="6" class="table-empty">No yearly data yet — click Sync All Data.</td></tr>';
             return;
         }
+        yearlyTbody.innerHTML = metrics.map(m => {
+            const retPct = m.downloads > 0
+                ? Math.max(0, Math.round(((m.downloads - m.uninstalls) / m.downloads) * 100))
+                : null;
+            const isAndroid = m.platform === 'Android';
+            const badgeClass = isAndroid ? 'badge-android' : 'badge-ios';
+            const icon = isAndroid
+                ? '<svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor"><path d="M17.523 15.341a.5.5 0 1 1-.001 1 .5.5 0 0 1 .001-1m-11.046 0a.5.5 0 1 1-.001 1 .5.5 0 0 1 .001-1M17.7 9.6l1.8-3.1a.4.4 0 0 0-.7-.4l-1.8 3.1A10.8 10.8 0 0 0 12 8.3c-1.8 0-3.5.5-5 1.3L5.2 6.1a.4.4 0 1 0-.7.4l1.8 3.1C4 11 2.2 13.4 2 16.3h20c-.2-2.9-2-5.3-4.3-6.7"/></svg>'
+                : '<svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor"><path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.8-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11"/></svg>';
 
-        metrics.forEach(metric => {
-            const tr = document.createElement('tr');
-            tr.style.borderBottom = '1px solid var(--glass-border)';
-            const platformClass = metric.platform === 'iOS' ? 'platform-ios' : 'platform-android';
-            tr.innerHTML = `
-                <td style="padding: 1rem; font-weight: 500;">${escapeHTML(metric.year)}</td>
-                <td style="padding: 1rem;">${escapeHTML(metric.app_name)}</td>
-                <td style="padding: 1rem;"><span class="platform-badge ${platformClass}">${escapeHTML(metric.platform)}</span></td>
-                <td style="padding: 1rem;">${new Intl.NumberFormat().format(metric.downloads)}</td>
-                <td style="padding: 1rem;">${metric.uninstalls > 0 ? new Intl.NumberFormat().format(metric.uninstalls) : 'N/A'}</td>
-            `;
-            yearlyTbody.appendChild(tr);
+            const retCell = retPct !== null
+                ? `<div class="retention-bar-wrap">
+                     <div class="retention-bar"><div class="retention-fill" style="width:${retPct}%"></div></div>
+                     <span class="retention-pct">${retPct}%</span>
+                   </div>`
+                : '<span style="color:#94a3b8">N/A</span>';
+
+            return `<tr>
+                <td><span class="year-badge">${esc(m.year)}</span></td>
+                <td>${esc(m.app_name)}</td>
+                <td><span class="badge ${badgeClass}">${icon} ${esc(m.platform)}</span></td>
+                <td><span class="num">${fmt(m.downloads)}</span></td>
+                <td>${m.uninstalls > 0 ? '<span class="num">' + fmt(m.uninstalls) + '</span>' : '<span style="color:#94a3b8">N/A</span>'}</td>
+                <td>${retCell}</td>
+            </tr>`;
+        }).join('');
+    }
+
+    // ── Bar Chart ─────────────────────────────────────────────
+    function renderBarChart(metrics) {
+        const years   = [...new Set(metrics.map(m => m.year))].sort();
+        const androidData = years.map(y => { const r = metrics.find(m => m.year === y && m.platform === 'Android'); return r ? r.downloads : 0; });
+        const iosData     = years.map(y => { const r = metrics.find(m => m.year === y && m.platform === 'iOS');     return r ? r.downloads : 0; });
+
+        const ctx = document.getElementById('yearly-bar-chart')?.getContext('2d');
+        if (!ctx) return;
+
+        if (barChart) barChart.destroy();
+        barChart = new Chart(ctx, {
+            type: 'bar',
+            data: {
+                labels: years,
+                datasets: [
+                    {
+                        label: 'Android',
+                        data: androidData,
+                        backgroundColor: 'rgba(34,197,94,.85)',
+                        borderRadius: 8, borderSkipped: false
+                    },
+                    {
+                        label: 'iOS',
+                        data: iosData,
+                        backgroundColor: 'rgba(59,130,246,.85)',
+                        borderRadius: 8, borderSkipped: false
+                    }
+                ]
+            },
+            options: {
+                responsive: true, maintainAspectRatio: false,
+                plugins: {
+                    legend: { position: 'top', labels: { boxWidth: 12, borderRadius: 4, font: { family: 'Inter', size: 12 } } },
+                    tooltip: {
+                        callbacks: {
+                            label: ctx => ` ${ctx.dataset.label}: ${fmt(ctx.parsed.y)}`
+                        }
+                    }
+                },
+                scales: {
+                    x: { grid: { display: false }, ticks: { font: { family: 'Inter' } } },
+                    y: { grid: { color: '#f1f5f9' }, ticks: { font: { family: 'Inter' }, callback: v => fmtShort(v) } }
+                }
+            }
         });
     }
 
-    function renderMetrics(metrics) {
-        metricsGrid.innerHTML = ''; // Clear current grid
+    // ── Donut Chart ───────────────────────────────────────────
+    function renderDonutChart(metrics) {
+        const android = metrics.find(m => m.platform === 'Android');
+        const ios     = metrics.find(m => m.platform === 'iOS');
+        const aDl = android?.downloads || 0;
+        const iDl = ios?.downloads     || 0;
 
-        if (metrics.length === 0) {
-            metricsGrid.innerHTML = '<p style="color: var(--text-muted); grid-column: 1/-1; text-align: center; padding: 2rem;">No metrics added yet. Add your first app above!</p>';
-            return;
-        }
+        const ctx = document.getElementById('platform-donut-chart')?.getContext('2d');
+        if (!ctx) return;
 
-        metrics.forEach(metric => {
-            const card = document.createElement('div');
-            card.className = 'metric-card';
-
-            const platformClass = metric.platform === 'iOS' ? 'platform-ios' : 'platform-android';
-
-            // Format downloads number (e.g., 10000 -> 10,000)
-            let formattedDownloads = new Intl.NumberFormat().format(metric.downloads);
-            if (metric.platform === 'iOS' && metric.downloads === 0) {
-                formattedDownloads = "N/A";
+        if (donutChart) donutChart.destroy();
+        donutChart = new Chart(ctx, {
+            type: 'doughnut',
+            data: {
+                labels: ['Android', 'iOS'],
+                datasets: [{
+                    data: [aDl, iDl],
+                    backgroundColor: ['rgba(34,197,94,.85)', 'rgba(59,130,246,.85)'],
+                    borderWidth: 0,
+                    hoverOffset: 6
+                }]
+            },
+            options: {
+                responsive: true, maintainAspectRatio: false,
+                cutout: '70%',
+                plugins: {
+                    legend: { position: 'bottom', labels: { boxWidth: 12, borderRadius: 4, font: { family: 'Inter', size: 12 } } },
+                    tooltip: {
+                        callbacks: {
+                            label: ctx => ` ${ctx.label}: ${fmt(ctx.parsed)}`
+                        }
+                    }
+                }
             }
-            if (metric.platform === 'Android' && metric.downloads > 0) {
-                formattedDownloads += "+";
-            }
-
-            card.innerHTML = `
-                <div class="metric-card-header">
-                    <div class="metric-card-title">${escapeHTML(metric.app_name)}</div>
-                    <div class="platform-badge ${platformClass}">${escapeHTML(metric.platform)}</div>
-                </div>
-                <div class="metric-stats">
-                    <div class="stat-item">
-                        <span class="stat-label">Downloads</span>
-                        <span class="stat-value">${formattedDownloads}</span>
-                    </div>
-                    <div class="stat-item" style="text-align: right;">
-                        <span class="stat-label">Rating</span>
-                        <span class="stat-value">⭐ ${metric.rating.toFixed(1)}</span>
-                    </div>
-                </div>
-            `;
-            metricsGrid.appendChild(card);
         });
     }
 
-    // Basic HTML escaping to prevent XSS
-    function escapeHTML(str) {
-        if (!str) return '';
-        return str.toString()
-            .replace(/&/g, '&amp;')
-            .replace(/</g, '&lt;')
-            .replace(/>/g, '&gt;')
-            .replace(/"/g, '&quot;')
-            .replace(/'/g, '&#039;');
+    // ── Helpers ───────────────────────────────────────────────
+    function set(id, val) { const el = document.getElementById(id); if (el) el.innerHTML = val; }
+    function fmt(n)        { return new Intl.NumberFormat().format(n); }
+    function fmtShort(n)   { if (n >= 1e6) return (n/1e6).toFixed(1)+'M'; if (n >= 1e3) return (n/1e3).toFixed(0)+'K'; return n; }
+    function esc(s)        { if (!s) return ''; return s.toString().replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+    function stars(r) {
+        const full = Math.round(r);
+        return Array.from({length:5}, (_,i) => i < full ? '⭐' : '☆').join('');
     }
 });
