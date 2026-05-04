@@ -176,23 +176,18 @@ def sync_private_data():
                         rows_read = 0
 
                         for row in reader:
-                            # Print column names on first month to help debug
                             if rows_read == 0 and month_num == 1:
-                                print(f"[DEBUG] GCS CSV columns: {list(row.keys())}")
+                                # Show all available install columns so we can verify
+                                debug_cols = {k: row.get(k, '—') for k in [
+                                    'Daily User Installs', 'Daily Device Installs',
+                                    'Install events', 'Daily User Uninstalls', 'Daily Device Uninstalls'
+                                ]}
+                                print(f"[DEBUG] GCS sample row values: {debug_cols}")
 
-                            # Google Play uses 'Daily Device Installs' — handle common variants
-                            dl_val = (
-                                row.get('Daily Device Installs') or
-                                row.get('daily_device_installs') or
-                                row.get('Device Installs') or
-                                '0'
-                            )
-                            ul_val = (
-                                row.get('Daily Device Uninstalls') or
-                                row.get('daily_device_uninstalls') or
-                                row.get('Device Uninstalls') or
-                                '0'
-                            )
+                            # Use 'Daily User Installs' = matches Play Console "User acquisition" metric
+                            # (counts unique users, not device events)
+                            dl_val = row.get('Daily User Installs') or '0'
+                            ul_val = row.get('Daily User Uninstalls') or row.get('Daily Device Uninstalls') or '0'
 
                             try:
                                 month_dl += int(str(dl_val).replace(',', '').strip() or 0)
