@@ -1,56 +1,53 @@
 document.addEventListener('DOMContentLoaded', () => {
     const metricsGrid = document.getElementById('metrics-grid');
 
-    const privateSyncBtn = document.getElementById('sync-private-btn');
-    const historicalTbody = document.getElementById('historical-tbody');
+    const syncAllBtn = document.getElementById('sync-all-btn');
     const yearlyTbody = document.getElementById('yearly-tbody');
 
     // Fetch and display metrics on load
     fetchMetrics();
-    fetchHistoricalMetrics();
+    fetchYearlyMetrics();
 
-    const syncBtn = document.getElementById('sync-germania-btn');
-    if (syncBtn) {
-        syncBtn.addEventListener('click', async () => {
-            syncBtn.textContent = 'Syncing...';
-            syncBtn.disabled = true;
+    if (syncAllBtn) {
+        syncAllBtn.addEventListener('click', async () => {
+            syncAllBtn.textContent = 'Syncing...';
+            syncAllBtn.disabled = true;
             try {
-                const response = await fetch('/api/sync/germania', { method: 'POST' });
-                if (response.ok) {
-                    await fetchMetrics();
+                // Run both sync operations concurrently
+                const [publicResponse, privateResponse] = await Promise.all([
+                    fetch('/api/sync/germania', { method: 'POST' }),
+                    fetch('/api/sync/private', { method: 'POST' })
+                ]);
+                
+                let successMessage = "";
+                let errorMessage = "";
+                
+                if (publicResponse.ok && privateResponse.ok) {
+                    successMessage = "All data synced successfully.";
                 } else {
-                    const err = await response.json();
-                    alert("Failed to sync: " + (err.error || "Unknown error"));
+                    if (!publicResponse.ok) {
+                        const err = await publicResponse.json();
+                        errorMessage += "Public Sync Failed: " + (err.error || "Unknown error") + "\n";
+                    }
+                    if (!privateResponse.ok) {
+                        const err = await privateResponse.json();
+                        errorMessage += "Private Sync Failed: " + (err.error || "Unknown error") + "\n";
+                    }
+                }
+                
+                await Promise.all([fetchMetrics(), fetchYearlyMetrics()]);
+                
+                if (errorMessage) {
+                    alert(errorMessage);
+                } else if (successMessage) {
+                    alert(successMessage);
                 }
             } catch (error) {
-                console.error("Error syncing:", error);
+                console.error("Error syncing data:", error);
                 alert("Error syncing data.");
             } finally {
-                syncBtn.textContent = 'Sync Public Data';
-                syncBtn.disabled = false;
-            }
-        });
-    }
-
-    if (privateSyncBtn) {
-        privateSyncBtn.addEventListener('click', async () => {
-            privateSyncBtn.textContent = 'Syncing...';
-            privateSyncBtn.disabled = true;
-            try {
-                const response = await fetch('/api/sync/private', { method: 'POST' });
-                if (response.ok) {
-                    await fetchHistoricalMetrics();
-                    alert("Private data synced successfully.");
-                } else {
-                    const err = await response.json();
-                    alert("Failed to sync private data: " + (err.error || "Unknown error"));
-                }
-            } catch (error) {
-                console.error("Error syncing private data:", error);
-                alert("Error syncing private data.");
-            } finally {
-                privateSyncBtn.textContent = 'Sync Private Data';
-                privateSyncBtn.disabled = false;
+                syncAllBtn.textContent = 'Sync All Data';
+                syncAllBtn.disabled = false;
             }
         });
     }
@@ -67,80 +64,39 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
-    async function fetchHistoricalMetrics() {
+    async function fetchYearlyMetrics() {
         try {
-            const response = await fetch('/api/metrics/monthly');
+            const response = await fetch('/api/metrics/yearly');
             const metrics = await response.json();
-            renderHistoricalMetrics(metrics);
+            renderYearlyMetrics(metrics);
         } catch (error) {
-            console.error("Error fetching historical metrics:", error);
-            if (historicalTbody) historicalTbody.innerHTML = '<tr><td colspan="5" style="padding: 1rem; color: red;">Error loading historical data.</td></tr>';
+            console.error("Error fetching yearly metrics:", error);
+            if (yearlyTbody) yearlyTbody.innerHTML = '<tr><td colspan="5" style="padding: 1rem; color: red;">Error loading yearly data.</td></tr>';
         }
     }
 
-    function renderHistoricalMetrics(metrics) {
-        if (!historicalTbody || !yearlyTbody) return;
-        historicalTbody.innerHTML = ''; // Clear current table
+    function renderYearlyMetrics(metrics) {
+        if (!yearlyTbody) return;
         yearlyTbody.innerHTML = '';
 
         if (metrics.length === 0) {
-            const emptyMsg = '<tr><td colspan="5" style="padding: 2rem; text-align: center; color: var(--text-muted);">No historical data yet. Sync private data to populate this table.</td></tr>';
-            historicalTbody.innerHTML = emptyMsg;
-            yearlyTbody.innerHTML = '<tr><td colspan="3" style="padding: 2rem; text-align: center; color: var(--text-muted);">No yearly data yet.</td></tr>';
+            yearlyTbody.innerHTML = '<tr><td colspan="5" style="padding: 2rem; text-align: center; color: var(--text-muted);">No yearly data yet. Click "Sync All Data" to populate this table.</td></tr>';
             return;
         }
 
-        const currentYear = new Date().getFullYear().toString();
-        const last3Years = [currentYear, (parseInt(currentYear) - 1).toString(), (parseInt(currentYear) - 2).toString()];
-
-        const currentYearMetrics = metrics.filter(m => m.month_year.startsWith(currentYear));
-        
-        const yearlyData = {};
-        metrics.forEach(m => {
-            const year = m.month_year.substring(0, 4);
-            if (!last3Years.includes(year)) return;
-            const key = `${year}-${m.platform}`;
-            if (!yearlyData[key]) {
-                yearlyData[key] = { year, platform: m.platform, downloads: 0 };
-            }
-            yearlyData[key].downloads += m.downloads;
+        metrics.forEach(metric => {
+            const tr = document.createElement('tr');
+            tr.style.borderBottom = '1px solid var(--glass-border)';
+            const platformClass = metric.platform === 'iOS' ? 'platform-ios' : 'platform-android';
+            tr.innerHTML = `
+                <td style="padding: 1rem; font-weight: 500;">${escapeHTML(metric.year)}</td>
+                <td style="padding: 1rem;">${escapeHTML(metric.app_name)}</td>
+                <td style="padding: 1rem;"><span class="platform-badge ${platformClass}">${escapeHTML(metric.platform)}</span></td>
+                <td style="padding: 1rem;">${new Intl.NumberFormat().format(metric.downloads)}</td>
+                <td style="padding: 1rem;">${metric.uninstalls > 0 ? new Intl.NumberFormat().format(metric.uninstalls) : 'N/A'}</td>
+            `;
+            yearlyTbody.appendChild(tr);
         });
-
-        const yearlyMetrics = Object.values(yearlyData).sort((a, b) => b.year.localeCompare(a.year));
-
-        if (yearlyMetrics.length === 0) {
-            yearlyTbody.innerHTML = '<tr><td colspan="3" style="padding: 2rem; text-align: center; color: var(--text-muted);">No data available for the last 3 years.</td></tr>';
-        } else {
-            yearlyMetrics.forEach(metric => {
-                const tr = document.createElement('tr');
-                tr.style.borderBottom = '1px solid var(--glass-border)';
-                const platformClass = metric.platform === 'iOS' ? 'platform-ios' : 'platform-android';
-                tr.innerHTML = `
-                    <td style="padding: 1rem; font-weight: 500;">${escapeHTML(metric.year)}</td>
-                    <td style="padding: 1rem;"><span class="platform-badge ${platformClass}">${escapeHTML(metric.platform)}</span></td>
-                    <td style="padding: 1rem;">${new Intl.NumberFormat().format(metric.downloads)}</td>
-                `;
-                yearlyTbody.appendChild(tr);
-            });
-        }
-
-        if (currentYearMetrics.length === 0) {
-            historicalTbody.innerHTML = '<tr><td colspan="5" style="padding: 2rem; text-align: center; color: var(--text-muted);">No data available for the current year.</td></tr>';
-        } else {
-            currentYearMetrics.forEach(metric => {
-                const tr = document.createElement('tr');
-                tr.style.borderBottom = '1px solid var(--glass-border)';
-                const platformClass = metric.platform === 'iOS' ? 'platform-ios' : 'platform-android';
-                tr.innerHTML = `
-                    <td style="padding: 1rem; font-weight: 500;">${escapeHTML(metric.month_year)}</td>
-                    <td style="padding: 1rem;">${escapeHTML(metric.app_name)}</td>
-                    <td style="padding: 1rem;"><span class="platform-badge ${platformClass}">${escapeHTML(metric.platform)}</span></td>
-                    <td style="padding: 1rem;">${new Intl.NumberFormat().format(metric.downloads)}</td>
-                    <td style="padding: 1rem;">${new Intl.NumberFormat().format(metric.uninstalls)}</td>
-                `;
-                historicalTbody.appendChild(tr);
-            });
-        }
     }
 
     function renderMetrics(metrics) {
