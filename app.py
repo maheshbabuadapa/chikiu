@@ -384,6 +384,142 @@ def sync_private_data():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+
+@app.route('/api/sync/historical', methods=['POST'])
+def sync_historical_data():
+    """Pull data for 2020–2025 from Google Play GCS and Apple Sales API."""
+    try:
+        import io, csv, gzip, json as pyjson
+        import io as sysio
+
+        bucket_name   = os.environ.get('GOOGLE_PLAY_BUCKET_ID')
+        issuer_id     = os.environ.get('APPLE_ISSUER_ID')
+        key_id        = os.environ.get('APPLE_KEY_ID')
+        key_path      = os.environ.get('APPLE_PRIVATE_KEY_PATH')
+        vendor_number = os.environ.get('APPLE_VENDOR_NUMBER')
+        APPLE_APP_ID  = '1535269629'
+        APP_START_YEAR = 2020
+        current_year   = datetime.now().year
+
+        results = {}
+
+        with sqlite3.connect(DB_NAME) as conn:
+            cursor = conn.cursor()
+
+            def upsert_hist(platform, year, downloads, uninstalls, subscriptions=0):
+                cursor.execute(
+                    'SELECT id FROM yearly_metrics WHERE app_name = ? AND platform = ? AND year = ?',
+                    ("Germania Insurance", platform, str(year))
+                )
+                row = cursor.fetchone()
+                if row:
+                    # Only update fields that have actual data (don't overwrite with zeros)
+                    if downloads > 0 or uninstalls > 0 or subscriptions > 0:
+                        cursor.execute(
+                            'UPDATE yearly_metrics SET downloads = ?, uninstalls = ?, subscriptions = ? WHERE id = ?',
+                            (downloads, uninstalls, subscriptions, row[0])
+                        )
+                else:
+                    cursor.execute(
+                        'INSERT INTO yearly_metrics (app_name, platform, year, downloads, uninstalls, subscriptions) VALUES (?, ?, ?, ?, ?, ?)',
+                        ("Germania Insurance", platform, str(year), downloads, uninstalls, subscriptions)
+                    )
+
+            # ── Android: loop past years via GCS ──────────────────────────
+            if bucket_name and os.environ.get('GOOGLE_APPLICATION_CREDENTIALS'):
+                try:
+                    storage_client = storage.Client()
+                    bucket = storage_client.bucket(bucket_name)
+
+                    for year in range(APP_START_YEAR, current_year):
+                        year_dl = 0
+                        year_ul = 0
+                        months_found = 0
+
+                        for month_num in range(1, 13):
+                            month_str = f"{year}{month_num:02d}"
+                            blob = bucket.blob(f"stats/installs/installs_com.germania.mobile.app_{month_str}_overview.csv")
+                            try:
+                                content = blob.download_as_bytes().decode('utf-16')
+                                reader = csv.DictReader(io.StringIO(content))
+                                for row in reader:
+                                    dl_val = row.get('Install events') or row.get('Daily User Installs') or '0'
+                                    ul_val = row.get('Daily User Uninstalls') or row.get('Daily Device Uninstalls') or '0'
+                                    try:
+                                        year_dl += int(str(dl_val).replace(',', '').strip() or 0)
+                                        year_ul += int(str(ul_val).replace(',', '').strip() or 0)
+                                    except ValueError:
+                                        pass
+                                months_found += 1
+                            except Exception:
+                                pass  # Month file not available
+
+                        if months_found > 0:
+                            upsert_hist("Android", year, year_dl, year_ul)
+                            print(f"Android {year}: {year_dl:,} downloads, {year_ul:,} uninstalls ({months_found} months)")
+                            results[f"android_{year}"] = year_dl
+                        else:
+                            print(f"Android {year}: no GCS data found")
+
+                except Exception as e:
+                    print(f"GCS historical error: {e}")
+
+            # ── iOS: loop past years via Apple Sales API ───────────────────
+            if all([issuer_id, key_id, key_path, vendor_number]) and os.path.exists(key_path):
+                try:
+                    with open(key_path, 'r') as f:
+                        private_key = f.read()
+
+                    def make_token():
+                        return jwt.encode(
+                            {"iss": issuer_id, "exp": int(time.time()) + 1200, "aud": "appstoreconnect-v1"},
+                            private_key, algorithm="ES256", headers={"kid": key_id}
+                        )
+
+                    for year in range(APP_START_YEAR, current_year):
+                        year_subs = 0
+                        months_found = 0
+
+                        for month_num in range(1, 13):
+                            month_str = f"{year}-{month_num:02d}"
+                            url = (
+                                f"https://api.appstoreconnect.apple.com/v1/salesReports"
+                                f"?filter[frequency]=MONTHLY&filter[reportSubType]=SUMMARY"
+                                f"&filter[reportType]=SALES&filter[vendorNumber]={vendor_number}"
+                                f"&filter[reportDate]={month_str}"
+                            )
+                            resp = requests.get(url, headers={'Authorization': f'Bearer {make_token()}'})
+                            if resp.status_code == 200:
+                                try:
+                                    data = gzip.decompress(resp.content).decode('utf-8')
+                                except Exception:
+                                    data = resp.content.decode('utf-8')
+                                reader = csv.DictReader(sysio.StringIO(data), delimiter='\t')
+                                for row in reader:
+                                    units        = int(row.get('Units', 0) or 0)
+                                    product_type = row.get('Product Type Identifier', '').strip()
+                                    apple_id     = str(row.get('Apple Identifier', '')).strip()
+                                    if apple_id == APPLE_APP_ID and product_type == '7F':
+                                        year_subs += units
+                                months_found += 1
+
+                        if months_found > 0:
+                            upsert_hist("iOS", year, 0, 0, year_subs)
+                            print(f"iOS {year}: {year_subs:,} subscription renewals ({months_found} months)")
+                            results[f"ios_{year}_subs"] = year_subs
+                        else:
+                            print(f"iOS {year}: no Apple Sales data found")
+
+                except Exception as e:
+                    print(f"Apple historical error: {e}")
+
+            conn.commit()
+
+        return jsonify({"message": "Historical data synced (2020–2025)", "results": results}), 200
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
 if __name__ == '__main__':
     import socket
     hostname = socket.gethostname()
