@@ -177,16 +177,14 @@ def sync_private_data():
 
                         for row in reader:
                             if rows_read == 0 and month_num == 1:
-                                # Show all available install columns so we can verify
-                                debug_cols = {k: row.get(k, '—') for k in [
-                                    'Daily User Installs', 'Daily Device Installs',
-                                    'Install events', 'Daily User Uninstalls', 'Daily Device Uninstalls'
-                                ]}
-                                print(f"[DEBUG] GCS sample row values: {debug_cols}")
+                                print(f"[DEBUG] GCS row1 — "
+                                      f"Daily User Installs={row.get('Daily User Installs','?')} | "
+                                      f"Daily Device Installs={row.get('Daily Device Installs','?')} | "
+                                      f"Install events={row.get('Install events','?')}")
 
-                            # Use 'Daily User Installs' = matches Play Console "User acquisition" metric
-                            # (counts unique users, not device events)
-                            dl_val = row.get('Daily User Installs') or '0'
+                            # 'Install events' = all install events including re-installs
+                            # This most closely matches Play Console "User acquisition (All events)"
+                            dl_val = row.get('Install events') or row.get('Daily User Installs') or '0'
                             ul_val = row.get('Daily User Uninstalls') or row.get('Daily Device Uninstalls') or '0'
 
                             try:
