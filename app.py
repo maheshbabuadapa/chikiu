@@ -159,8 +159,9 @@ def sync_private_data():
                     blob_name = f"stats/installs/installs_com.germania.mobile.app_{month_str}_overview.csv"
                     blob = bucket.blob(blob_name)
                     try:
-                        # utf-8-sig strips the invisible BOM character Google adds
-                        content = blob.download_as_text(encoding='utf-8-sig')
+                        # Google Play Console exports CSVs in UTF-16 LE (not UTF-8)
+                        content = blob.download_as_bytes()
+                        content = content.decode('utf-16')
                         reader = csv.DictReader(io.StringIO(content))
 
                         month_dl = 0
