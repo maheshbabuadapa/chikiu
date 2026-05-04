@@ -159,15 +159,47 @@ def sync_private_data():
                     blob_name = f"stats/installs/installs_com.germania.mobile.app_{month_str}_overview.csv"
                     blob = bucket.blob(blob_name)
                     try:
-                        content = blob.download_as_text()
+                        # utf-8-sig strips the invisible BOM character Google adds
+                        content = blob.download_as_text(encoding='utf-8-sig')
                         reader = csv.DictReader(io.StringIO(content))
+
+                        month_dl = 0
+                        month_ul = 0
+                        rows_read = 0
+
                         for row in reader:
-                            android_downloads += int(row.get('Daily Device Installs', 0) or 0)
-                            android_uninstalls += int(row.get('Daily Device Uninstalls', 0) or 0)
-                        print(f"Loaded GCS report for {month_str}")
+                            # Print column names on first month to help debug
+                            if rows_read == 0 and month_num == 1:
+                                print(f"[DEBUG] GCS CSV columns: {list(row.keys())}")
+
+                            # Google Play uses 'Daily Device Installs' — handle common variants
+                            dl_val = (
+                                row.get('Daily Device Installs') or
+                                row.get('daily_device_installs') or
+                                row.get('Device Installs') or
+                                '0'
+                            )
+                            ul_val = (
+                                row.get('Daily Device Uninstalls') or
+                                row.get('daily_device_uninstalls') or
+                                row.get('Device Uninstalls') or
+                                '0'
+                            )
+
+                            try:
+                                month_dl += int(str(dl_val).replace(',', '').strip() or 0)
+                                month_ul += int(str(ul_val).replace(',', '').strip() or 0)
+                            except ValueError:
+                                pass
+                            rows_read += 1
+
+                        android_downloads  += month_dl
+                        android_uninstalls += month_ul
+                        print(f"Loaded GCS {month_str}: +{month_dl:,} downloads, +{month_ul:,} uninstalls ({rows_read} rows)")
+
                     except Exception as month_err:
                         print(f"No report for {month_str}: {month_err}")
-                        continue  # skip missing months silently
+                        continue
 
             except Exception as e:
                 print(f"Error connecting to GCS: {e}")
