@@ -257,12 +257,20 @@ def sync_private_data():
                             data = resp.content.decode('utf-8')  # not gzipped
 
                         reader = csv.DictReader(sysio.StringIO(data), delimiter='\t')
+                        type_counts = {}
+                        month_total = 0
                         for row in reader:
                             units = int(row.get('Units', 0) or 0)
-                            product_type = row.get('Product Type Identifier', '')
-                            if product_type in ('1', '1F', '1T'):
+                            product_type = row.get('Product Type Identifier', '').strip()
+                            # Track all types for debugging
+                            type_counts[product_type] = type_counts.get(product_type, 0) + units
+                            # '1'  = First-time download (new install)
+                            # '1T' = Redownload (user reinstalls)
+                            # '1F' = App Update — NOT a download, excluded intentionally
+                            if product_type in ('1', '1T'):
                                 ios_downloads += units
-                        print(f"Loaded Apple report for {month_str}: +{units} downloads")
+                                month_total   += units
+                        print(f"Loaded Apple report for {month_str}: +{month_total} downloads | types: {type_counts}")
                     elif resp.status_code == 404:
                         print(f"No Apple report available for {month_str} (404) — skipping.")
                     else:
