@@ -9,7 +9,8 @@ from google.cloud import storage
 from google_play_scraper import app as play_scraper_app
 from flask import Flask, request, jsonify, render_template
 
-load_dotenv()
+# override=False ensures real server environment variables take priority over .env file
+load_dotenv(override=False)
 
 app = Flask(__name__)
 DB_NAME = "database.db"
@@ -172,53 +173,70 @@ def sync_private_data():
                 print(f"Error connecting to GCS: {e}")
 
         # --- 2. APPLE APP STORE CONNECT ---
-        # Apple Sales API provides YEARLY reports via filter[frequency]=YEARLY
+        # Apple YEARLY reports are only available after the year ends.
+        # Instead, we fetch MONTHLY reports for each month so far this year and sum them.
         issuer_id = os.environ.get('APPLE_ISSUER_ID')
         key_id = os.environ.get('APPLE_KEY_ID')
         key_path = os.environ.get('APPLE_PRIVATE_KEY_PATH')
         vendor_number = os.environ.get('APPLE_VENDOR_NUMBER')
 
-        if issuer_id and key_id and key_path and vendor_number and os.path.exists(key_path):
+        if not all([issuer_id, key_id, key_path, vendor_number]):
+            print("Apple credentials not fully configured in .env — skipping Apple sync.")
+        elif not os.path.exists(key_path):
+            print(f"Apple .p8 key file not found at: {key_path}")
+        else:
             try:
-                import gzip, io as sysio
+                import gzip, io as sysio, csv
                 with open(key_path, 'r') as f:
                     private_key = f.read()
 
-                token = jwt.encode(
-                    {
-                        "iss": issuer_id,
-                        "exp": int(time.time()) + 1200,
-                        "aud": "appstoreconnect-v1"
-                    },
-                    private_key,
-                    algorithm="ES256",
-                    headers={"kid": key_id}
-                )
-                # Request yearly SALES report from Apple
-                url = (
-                    f"https://api.appstoreconnect.apple.com/v1/salesReports"
-                    f"?filter[frequency]=YEARLY"
-                    f"&filter[reportSubType]=SUMMARY"
-                    f"&filter[reportType]=SALES"
-                    f"&filter[vendorNumber]={vendor_number}"
-                    f"&filter[reportDate]={current_year}"
-                )
-                headers = {'Authorization': f'Bearer {token}'}
-                response = requests.get(url, headers=headers)
-                if response.status_code == 200:
-                    # Apple returns gzipped TSV
-                    data = gzip.decompress(response.content).decode('utf-8')
-                    import csv
-                    reader = csv.DictReader(sysio.StringIO(data), delimiter='\t')
-                    for row in reader:
-                        units = int(row.get('Units', 0) or 0)
-                        product_type = row.get('Product Type Identifier', '')
-                        if product_type in ('1', '1F', '1T'):  # Free/paid app downloads
-                            ios_downloads += units
-                else:
-                    print(f"Apple API error {response.status_code}: {response.text}")
+                current_month_num = datetime.now().month
+
+                for month_num in range(1, current_month_num + 1):
+                    month_str = f"{current_year}-{month_num:02d}"
+
+                    # Generate a fresh token for each request (they expire)
+                    token = jwt.encode(
+                        {
+                            "iss": issuer_id,
+                            "exp": int(time.time()) + 1200,
+                            "aud": "appstoreconnect-v1"
+                        },
+                        private_key,
+                        algorithm="ES256",
+                        headers={"kid": key_id}
+                    )
+
+                    url = (
+                        f"https://api.appstoreconnect.apple.com/v1/salesReports"
+                        f"?filter[frequency]=MONTHLY"
+                        f"&filter[reportSubType]=SUMMARY"
+                        f"&filter[reportType]=SALES"
+                        f"&filter[vendorNumber]={vendor_number}"
+                        f"&filter[reportDate]={month_str}"
+                    )
+                    resp = requests.get(url, headers={'Authorization': f'Bearer {token}'})
+
+                    if resp.status_code == 200:
+                        try:
+                            data = gzip.decompress(resp.content).decode('utf-8')
+                        except Exception:
+                            data = resp.content.decode('utf-8')  # not gzipped
+
+                        reader = csv.DictReader(sysio.StringIO(data), delimiter='\t')
+                        for row in reader:
+                            units = int(row.get('Units', 0) or 0)
+                            product_type = row.get('Product Type Identifier', '')
+                            if product_type in ('1', '1F', '1T'):
+                                ios_downloads += units
+                        print(f"Loaded Apple report for {month_str}: +{units} downloads")
+                    elif resp.status_code == 404:
+                        print(f"No Apple report available for {month_str} (404) — skipping.")
+                    else:
+                        print(f"Apple API error for {month_str}: {resp.status_code} — {resp.text[:300]}")
+
             except Exception as e:
-                print(f"Error fetching App Store Connect yearly report: {e}")
+                print(f"Error fetching App Store Connect reports: {e}")
 
         # --- 3. SAVE TO yearly_metrics TABLE ---
         with sqlite3.connect(DB_NAME) as conn:
