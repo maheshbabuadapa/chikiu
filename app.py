@@ -39,11 +39,20 @@ def init_db():
                 UNIQUE(app_name, platform, year)
             )
         ''')
-        # Migrate existing DBs that don't have the subscriptions column yet
+        # Migrate: subscriptions column
         try:
             cursor.execute('ALTER TABLE yearly_metrics ADD COLUMN subscriptions INTEGER NOT NULL DEFAULT 0')
         except Exception:
-            pass  # Column already exists — that's fine
+            pass
+        # Table for manually-set iOS download overrides (when Analytics API is blocked)
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS ios_download_override (
+                id      INTEGER PRIMARY KEY AUTOINCREMENT,
+                year    TEXT    NOT NULL UNIQUE,
+                count   INTEGER NOT NULL DEFAULT 0,
+                updated TEXT    NOT NULL
+            )
+        ''')
         conn.commit()
 
 # Initialize the database on startup
@@ -140,6 +149,40 @@ def get_yearly_metrics():
             })
         return jsonify(metrics)
 
+@app.route('/api/ios-downloads/set', methods=['POST'])
+def set_ios_downloads():
+    """Manually set the iOS download count for a year (used when Analytics API is blocked)."""
+    data  = request.get_json() or {}
+    year  = str(data.get('year',  datetime.now().year))
+    count = int(data.get('count', 0))
+    if count < 0:
+        return jsonify({'error': 'count must be >= 0'}), 400
+
+    now_str = datetime.now().strftime('%B %d, %Y %I:%M %p')
+    with sqlite3.connect(DB_NAME) as conn:
+        conn.execute(
+            'INSERT INTO ios_download_override (year, count, updated) VALUES (?, ?, ?)'
+            ' ON CONFLICT(year) DO UPDATE SET count=excluded.count, updated=excluded.updated',
+            (year, count, now_str)
+        )
+        # Also update the yearly_metrics table so charts reflect this
+        conn.execute(
+            'UPDATE yearly_metrics SET downloads = ? WHERE platform = "iOS" AND year = ?',
+            (count, year)
+        )
+        conn.commit()
+
+    print(f"iOS downloads override set: {count:,} for {year} (updated {now_str})")
+    return jsonify({'year': year, 'count': count, 'updated': now_str})
+
+@app.route('/api/ios-downloads/get', methods=['GET'])
+def get_ios_downloads_override():
+    """Returns manually-set iOS download overrides."""
+    with sqlite3.connect(DB_NAME) as conn:
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute('SELECT * FROM ios_download_override ORDER BY year DESC').fetchall()
+        return jsonify([dict(r) for r in rows])
+
 @app.route('/api/app-versions', methods=['GET'])
 def get_app_versions():
     """Returns current version, release date, and release notes for iOS and Android."""
@@ -224,41 +267,57 @@ def debug_apple_analytics():
             private_key, algorithm="ES256", headers={"kid": key_id}
         )
 
-    result = {}
+    result = {
+        'key_id': key_id,
+        'issuer_id': issuer_id,
+        'tests': {}
+    }
     headers_auth = {'Authorization': f'Bearer {make_token()}'}
 
-    # List all existing report requests for this app
-    list_resp = requests.get(
-        f'https://api.appstoreconnect.apple.com/v1/analyticsReportRequests?filter[app]={APPLE_APP_ID}',
-        headers=headers_auth
-    )
-    result['list_status'] = list_resp.status_code
-    result['requests'] = []
+    # Test 1: Can we reach the App Store Connect API at all?
+    test1 = requests.get('https://api.appstoreconnect.apple.com/v1/apps',
+                         headers=headers_auth)
+    apps_found = []
+    if test1.status_code == 200:
+        for a in test1.json().get('data', []):
+            apps_found.append({
+                'id':     a['id'],
+                'name':   a.get('attributes', {}).get('name'),
+                'bundle': a.get('attributes', {}).get('bundleId'),
+            })
+    result['tests']['list_apps'] = {
+        'status': test1.status_code,
+        'apps':   apps_found,
+        'error':  test1.text[:300] if test1.status_code != 200 else None
+    }
 
-    if list_resp.status_code == 200:
-        req_data = list_resp.json().get('data', [])
-        for req in req_data:
-            req_info = {
-                'id': req['id'],
-                'accessType': req.get('attributes', {}).get('accessType'),
-                'reports': []
-            }
-            # Get reports for this request
-            rep_resp = requests.get(
-                f'https://api.appstoreconnect.apple.com/v1/analyticsReportRequests/{req["id"]}/reports',
-                headers={'Authorization': f'Bearer {make_token()}'}
-            )
-            req_info['reports_status'] = rep_resp.status_code
-            if rep_resp.status_code == 200:
-                for report in rep_resp.json().get('data', []):
-                    attrs = report.get('attributes', {})
-                    req_info['reports'].append({
-                        'id': report['id'],
-                        'category': attrs.get('category'),
-                        'name': attrs.get('name'),
-                        'state': attrs.get('processingState'),
-                    })
-            result['requests'].append(req_info)
+    # Test 2: Analytics endpoint WITHOUT filter
+    test2 = requests.get('https://api.appstoreconnect.apple.com/v1/analyticsReportRequests',
+                         headers={'Authorization': f'Bearer {make_token()}'})
+    result['tests']['analytics_no_filter'] = {
+        'status': test2.status_code,
+        'body':   test2.text[:500]
+    }
+
+    # Test 3: Analytics endpoint WITH app filter
+    test3 = requests.get(
+        f'https://api.appstoreconnect.apple.com/v1/analyticsReportRequests?filter[app]={APPLE_APP_ID}',
+        headers={'Authorization': f'Bearer {make_token()}'}
+    )
+    result['tests']['analytics_with_filter'] = {
+        'status': test3.status_code,
+        'body':   test3.text[:500]
+    }
+
+    # Test 4: Try fetching the specific app by ID
+    test4 = requests.get(
+        f'https://api.appstoreconnect.apple.com/v1/apps/{APPLE_APP_ID}',
+        headers={'Authorization': f'Bearer {make_token()}'}
+    )
+    result['tests']['get_app_by_id'] = {
+        'status': test4.status_code,
+        'body':   test4.text[:300]
+    }
 
     return jsonify(result)
 
@@ -395,17 +454,43 @@ def sync_private_data():
                                     if product_type == '7F':
                                         ios_subscriptions += units
                                         month_subs        += units
-                                    elif product_type in ('3F', '1F', '1', 'F1'):
-                                        # 3F = free app download (confirmed from debug output)
-                                        ios_dl_from_sales += units
-                                        month_dl          += units
-                            print(f"Apple Sales {month_str}: {month_dl:,} downloads  |  {month_subs:,} renewals")
+                                    # NOTE: 3F from Sales Reports includes app UPDATES (not just downloads)
+                                    # so it does NOT match App Store Connect Analytics "Total Downloads".
+                                    # We leave ios_downloads=0 until Analytics API permission is granted.
+                            print(f"Apple Sales {month_str}: {month_subs:,} renewals")
                         else:
                             print(f"Apple Sales {month_str}: HTTP {resp.status_code} — {resp.text[:150]}")
 
-                    print(f"Apple Sales YTD: {ios_dl_from_sales:,} downloads, {ios_subscriptions:,} renewals")
-                    ios_downloads  = ios_dl_from_sales
+                    print(f"Apple Sales YTD: {ios_subscriptions:,} renewals")
+                    ios_downloads  = 0               # default — overridden by CSV file if present
                     ios_uninstalls = ios_subscriptions   # passed to upsert as subscriptions field
+
+                # ── Fallback: read manually exported App Store Connect CSV ──────
+                # Export from: App Store Connect → Analytics → Downloads → Export
+                # Save file as: ios_downloads_2026.csv in project folder
+                csv_path = os.path.join(os.path.dirname(__file__), f'ios_downloads_{current_year}.csv')
+                if os.path.exists(csv_path):
+                    try:
+                        import csv as _csv
+                        total_dl = 0
+                        with open(csv_path, newline='', encoding='utf-8-sig') as f:
+                            # App Store Connect CSV has a date column and a Downloads column
+                            reader = _csv.DictReader(f)
+                            for r in reader:
+                                # Try common column names Apple uses in exports
+                                val = (r.get('Downloads') or r.get('Total Downloads')
+                                       or r.get('First Time Downloads') or '0')
+                                try:
+                                    total_dl += int(str(val).replace(',', '').strip() or 0)
+                                except ValueError:
+                                    pass
+                        if total_dl > 0:
+                            ios_downloads = total_dl
+                            print(f"iOS downloads from CSV file: {ios_downloads:,} (exact match with App Store Connect)")
+                        else:
+                            print(f"CSV file found at {csv_path} but no download values parsed — check column names")
+                    except Exception as e:
+                        print(f"CSV read error: {e}")
 
 
             except Exception as e:
