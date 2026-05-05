@@ -311,7 +311,25 @@ def sync_private_data():
                             reader = csv.DictReader(sysio.StringIO(data), delimiter='\t')
                             month_subs = 0
                             month_dl   = 0
-                            for row in reader:
+                            all_rows   = list(reader)
+
+                            # DEBUG: on first month only, dump all rows so we can see what Apple sends
+                            if month_num == 1:
+                                print(f"[DEBUG] Sales report {month_str}: {len(all_rows)} rows total")
+                                seen_types = {}
+                                for r in all_rows:
+                                    pt  = r.get('Product Type Identifier', '?').strip()
+                                    aid = str(r.get('Apple Identifier', '?')).strip()
+                                    key = (aid, pt)
+                                    if key not in seen_types:
+                                        seen_types[key] = int(r.get('Units', 0) or 0)
+                                    else:
+                                        seen_types[key] += int(r.get('Units', 0) or 0)
+                                for (aid, pt), units in sorted(seen_types.items()):
+                                    marker = " ← OUR APP" if aid == APPLE_APP_ID else ""
+                                    print(f"  Apple ID={aid}  Type={pt}  Units={units}{marker}")
+
+                            for row in all_rows:
                                 units        = int(row.get('Units', 0) or 0)
                                 product_type = row.get('Product Type Identifier', '').strip()
                                 apple_id     = str(row.get('Apple Identifier', '')).strip()
@@ -319,13 +337,13 @@ def sync_private_data():
                                     if product_type == '7F':
                                         ios_subscriptions += units
                                         month_subs        += units
-                                    elif product_type == '1':
-                                        # Type 1 = free/paid app download event
+                                    elif product_type in ('1', 'F1'):
+                                        # Type 1 = paid/free download, F1 = free download (alternate code)
                                         ios_dl_from_sales += units
                                         month_dl          += units
                             print(f"Apple Sales {month_str}: {month_dl:,} downloads  |  {month_subs:,} renewals")
                         else:
-                            print(f"Apple Sales {month_str}: HTTP {resp.status_code}")
+                            print(f"Apple Sales {month_str}: HTTP {resp.status_code} — {resp.text[:150]}")
 
                     print(f"Apple Sales YTD: {ios_dl_from_sales:,} downloads, {ios_subscriptions:,} renewals")
                     ios_downloads  = ios_dl_from_sales
