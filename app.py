@@ -140,6 +140,69 @@ def get_yearly_metrics():
             })
         return jsonify(metrics)
 
+@app.route('/api/app-versions', methods=['GET'])
+def get_app_versions():
+    """Returns current version, release date, and release notes for iOS and Android."""
+    ANDROID_PKG  = 'com.germania.mobile.app'
+    APPLE_APP_ID = '1535269629'
+    result = {'ios': {}, 'android': {}}
+
+    # ── iOS: public iTunes lookup API (no auth) ──────────────────────────────
+    try:
+        r = requests.get(
+            f'https://itunes.apple.com/lookup?id={APPLE_APP_ID}&country=us',
+            timeout=10
+        )
+        if r.status_code == 200:
+            items = r.json().get('results', [])
+            if items:
+                d = items[0]
+                raw_date = d.get('currentVersionReleaseDate', '')
+                friendly = ''
+                if raw_date:
+                    try:
+                        dt = datetime.strptime(raw_date[:10], '%Y-%m-%d')
+                        friendly = dt.strftime('%B %d, %Y')
+                    except Exception:
+                        friendly = raw_date[:10]
+                notes = d.get('releaseNotes', '').strip()
+                result['ios'] = {
+                    'version':      d.get('version', 'Unknown'),
+                    'release_date': friendly,
+                    'release_notes': notes[:600] + ('...' if len(notes) > 600 else ''),
+                    'min_os':       d.get('minimumOsVersion', ''),
+                    'size_mb':      round(int(d.get('fileSizeBytes', 0)) / 1_048_576, 1),
+                    'rating':       round(d.get('averageUserRatingForCurrentVersion', 0), 1),
+                    'store_url':    d.get('trackViewUrl', ''),
+                }
+    except Exception as e:
+        result['ios']['error'] = str(e)
+
+    # ── Android: google-play-scraper ─────────────────────────────────────────
+    try:
+        d = play_scraper_app(ANDROID_PKG, lang='en', country='us')
+        raw_date = d.get('updated') or d.get('released') or 0
+        friendly = ''
+        if raw_date:
+            try:
+                friendly = datetime.fromtimestamp(raw_date).strftime('%B %d, %Y')
+            except Exception:
+                friendly = str(raw_date)
+        notes = (d.get('recentChanges') or d.get('whatsNew') or '').strip()
+        result['android'] = {
+            'version':       d.get('version', 'Unknown'),
+            'release_date':  friendly,
+            'release_notes': notes[:600] + ('...' if len(notes) > 600 else ''),
+            'min_android':   d.get('androidVersion', ''),
+            'size':          d.get('size', ''),
+            'rating':        round(d.get('score', 0), 1),
+            'store_url':     f'https://play.google.com/store/apps/details?id={ANDROID_PKG}',
+        }
+    except Exception as e:
+        result['android']['error'] = str(e)
+
+    return jsonify(result)
+
 @app.route('/api/debug/apple-analytics', methods=['GET'])
 def debug_apple_analytics():
     """Shows exactly what Apple's Analytics API is returning — for troubleshooting."""
@@ -313,27 +376,16 @@ def sync_private_data():
                             month_dl   = 0
                             all_rows   = list(reader)
 
-                            # DEBUG: on first month only, dump ALL 3F rows to spot duplicates
+                            # DEBUG: dump all columns from first 3F row so we can find platform filter
                             if month_num == 1:
-                                print(f"[DEBUG] Sales report {month_str}: {len(all_rows)} rows total")
-                                seen_types = {}
-                                for r in all_rows:
-                                    pt  = r.get('Product Type Identifier', '?').strip()
-                                    aid = str(r.get('Apple Identifier', '?')).strip()
-                                    key = (aid, pt)
-                                    seen_types[key] = seen_types.get(key, 0) + int(r.get('Units', 0) or 0)
-                                for (aid, pt), units in sorted(seen_types.items()):
-                                    marker = " ← OUR APP" if aid == APPLE_APP_ID else ""
-                                    print(f"  Apple ID={aid}  Type={pt}  Units={units}{marker}")
-
-                                # Print EVERY 3F row individually to spot territory duplication
-                                print(f"\n  [3F row details for {month_str}]:")
+                                print(f"[DEBUG] Sales {month_str}: {len(all_rows)} rows")
                                 for r in all_rows:
                                     if str(r.get('Apple Identifier','')).strip() == APPLE_APP_ID \
                                        and r.get('Product Type Identifier','').strip() == '3F':
-                                        terr  = r.get('Country Code') or r.get('Territory') or r.get('Storefront') or '?'
-                                        units = r.get('Units','0')
-                                        print(f"    Territory={terr}  Units={units}")
+                                        print("[DEBUG] All columns in first 3F row:")
+                                        for col, val in r.items():
+                                            print(f"  {col!r}: {val!r}")
+                                        break  # only need one row to see column names
 
                             for row in all_rows:
                                 units        = int(row.get('Units', 0) or 0)
