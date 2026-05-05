@@ -140,6 +140,65 @@ def get_yearly_metrics():
             })
         return jsonify(metrics)
 
+@app.route('/api/debug/apple-analytics', methods=['GET'])
+def debug_apple_analytics():
+    """Shows exactly what Apple's Analytics API is returning — for troubleshooting."""
+    import gzip, json as pyjson
+    issuer_id    = os.environ.get('APPLE_ISSUER_ID')
+    key_id       = os.environ.get('APPLE_KEY_ID')
+    key_path     = os.environ.get('APPLE_PRIVATE_KEY_PATH')
+    APPLE_APP_ID = '1535269629'
+
+    if not all([issuer_id, key_id, key_path]) or not os.path.exists(key_path):
+        return jsonify({"error": "Apple credentials not configured"}), 400
+
+    with open(key_path, 'r') as f:
+        private_key = f.read()
+
+    def make_token():
+        return jwt.encode(
+            {"iss": issuer_id, "exp": int(time.time()) + 1200, "aud": "appstoreconnect-v1"},
+            private_key, algorithm="ES256", headers={"kid": key_id}
+        )
+
+    result = {}
+    headers_auth = {'Authorization': f'Bearer {make_token()}'}
+
+    # List all existing report requests for this app
+    list_resp = requests.get(
+        f'https://api.appstoreconnect.apple.com/v1/analyticsReportRequests?filter[app]={APPLE_APP_ID}',
+        headers=headers_auth
+    )
+    result['list_status'] = list_resp.status_code
+    result['requests'] = []
+
+    if list_resp.status_code == 200:
+        req_data = list_resp.json().get('data', [])
+        for req in req_data:
+            req_info = {
+                'id': req['id'],
+                'accessType': req.get('attributes', {}).get('accessType'),
+                'reports': []
+            }
+            # Get reports for this request
+            rep_resp = requests.get(
+                f'https://api.appstoreconnect.apple.com/v1/analyticsReportRequests/{req["id"]}/reports',
+                headers={'Authorization': f'Bearer {make_token()}'}
+            )
+            req_info['reports_status'] = rep_resp.status_code
+            if rep_resp.status_code == 200:
+                for report in rep_resp.json().get('data', []):
+                    attrs = report.get('attributes', {})
+                    req_info['reports'].append({
+                        'id': report['id'],
+                        'category': attrs.get('category'),
+                        'name': attrs.get('name'),
+                        'state': attrs.get('processingState'),
+                    })
+            result['requests'].append(req_info)
+
+    return jsonify(result)
+
 @app.route('/api/sync/private', methods=['POST'])
 def sync_private_data():
     try:
@@ -261,82 +320,117 @@ def sync_private_data():
                                     month_subs += units
                             print(f"Apple Sales {month_str}: {month_subs:,} subscription renewals")
                     print(f"Apple Sales total: {ios_subscriptions:,} subscription renewals for {current_year}")
-                    # Store subscription count as a proxy until Analytics downloads arrive
-                    ios_uninstalls = ios_subscriptions  # repurposed field for subscriptions
+                    ios_uninstalls = ios_subscriptions  # pass subscription count to save step
 
-                # ── Part B: Analytics API (downloads — ready after 24h) ────────────
+                # ── Part B: Analytics API (downloads) ────────────────────────────
                 headers_auth = {'Authorization': f'Bearer {make_token()}'}
-                request_id = None
+
+                # Check all existing requests (any type) for usable reports
+                all_requests = []
                 list_resp = requests.get(
                     f'https://api.appstoreconnect.apple.com/v1/analyticsReportRequests?filter[app]={APPLE_APP_ID}',
                     headers=headers_auth
                 )
                 if list_resp.status_code == 200:
-                    for req in list_resp.json().get('data', []):
-                        if req.get('attributes', {}).get('accessType') == 'ONGOING':
-                            request_id = req['id']
-                            print(f"Found analytics request: {request_id}")
-                            break
+                    all_requests = list_resp.json().get('data', [])
+                    print(f"Apple Analytics: found {len(all_requests)} existing request(s)")
 
-                if not request_id:
-                    cr = requests.post(
-                        'https://api.appstoreconnect.apple.com/v1/analyticsReportRequests',
-                        headers={**headers_auth, 'Content-Type': 'application/json'},
-                        data=pyjson.dumps({
-                            "data": {
-                                "type": "analyticsReportRequests",
-                                "attributes": {"accessType": "ONGOING"},
-                                "relationships": {"app": {"data": {"type": "apps", "id": APPLE_APP_ID}}}
-                            }
-                        })
-                    )
-                    if cr.status_code == 201:
-                        request_id = cr.json()['data']['id']
-                        print(f"Created analytics request {request_id} — downloads available tomorrow.")
-
-                if request_id:
-                    headers_auth = {'Authorization': f'Bearer {make_token()}'}
+                # Try every existing request — check all their reports for download data
+                found_download_data = False
+                for req in all_requests:
+                    req_id   = req['id']
+                    req_type = req.get('attributes', {}).get('accessType', '?')
                     rep_resp = requests.get(
-                        f'https://api.appstoreconnect.apple.com/v1/analyticsReportRequests/{request_id}/reports',
-                        headers=headers_auth
+                        f'https://api.appstoreconnect.apple.com/v1/analyticsReportRequests/{req_id}/reports',
+                        headers={'Authorization': f'Bearer {make_token()}'}
                     )
-                    if rep_resp.status_code == 200:
-                        for report in rep_resp.json().get('data', []):
-                            if report.get('attributes', {}).get('category') != 'APP_USAGE':
+                    if rep_resp.status_code != 200:
+                        print(f"  Request {req_id} ({req_type}): reports endpoint returned {rep_resp.status_code}")
+                        continue
+
+                    reports = rep_resp.json().get('data', [])
+                    categories = [r.get('attributes', {}).get('category') for r in reports]
+                    states     = [r.get('attributes', {}).get('processingState') for r in reports]
+                    print(f"  Request {req_id} ({req_type}): {len(reports)} report(s) — categories={categories}, states={states}")
+
+                    for report in reports:
+                        attrs    = report.get('attributes', {})
+                        category = attrs.get('category', '')
+                        state    = attrs.get('processingState', '')
+                        if state == 'FAILED':
+                            print(f"    Report {report['id']} ({category}) FAILED — skipping")
+                            continue
+                        # Try all categories — APP_USAGE is the one with downloads
+                        seg_resp = requests.get(
+                            f'https://api.appstoreconnect.apple.com/v1/analyticsReports/{report["id"]}/segments',
+                            headers={'Authorization': f'Bearer {make_token()}'}
+                        )
+                        if seg_resp.status_code != 200:
+                            continue
+                        segs = seg_resp.json().get('data', [])
+                        print(f"    Report {report['id']} ({category}): {len(segs)} segment(s)")
+
+                        for seg in segs:
+                            dl_url = seg.get('attributes', {}).get('url', '')
+                            if not dl_url:
                                 continue
-                            seg_resp = requests.get(
-                                f'https://api.appstoreconnect.apple.com/v1/analyticsReports/{report["id"]}/segments',
-                                headers={'Authorization': f'Bearer {make_token()}'}
-                            )
-                            if seg_resp.status_code != 200:
+                            sr = requests.get(dl_url, headers={'Authorization': f'Bearer {make_token()}'})
+                            if sr.status_code != 200:
                                 continue
-                            for seg in seg_resp.json().get('data', []):
-                                dl_url = seg.get('attributes', {}).get('url', '')
-                                if not dl_url:
+                            try:
+                                raw = gzip.decompress(sr.content).decode('utf-8')
+                            except Exception:
+                                raw = sr.content.decode('utf-8')
+                            reader = csv.DictReader(sysio.StringIO(raw), delimiter='\t')
+                            headers_row = None
+                            for row in reader:
+                                if headers_row is None:
+                                    headers_row = list(row.keys())
+                                    print(f"      Segment columns: {headers_row[:8]}")
+                                row_date = row.get('Date', '') or row.get('date', '')
+                                if not row_date.startswith(current_year):
                                     continue
-                                sr = requests.get(dl_url, headers={'Authorization': f'Bearer {make_token()}'})
-                                if sr.status_code != 200:
-                                    continue
+                                dl    = row.get('Downloads') or row.get('Total Downloads') or row.get('First Time Downloads') or '0'
+                                re_dl = row.get('Redownloads') or row.get('Re-Downloads') or '0'
                                 try:
-                                    raw = gzip.decompress(sr.content).decode('utf-8')
-                                except Exception:
-                                    raw = sr.content.decode('utf-8')
-                                reader = csv.DictReader(sysio.StringIO(raw), delimiter='\t')
-                                for row in reader:
-                                    row_date = row.get('Date', '') or row.get('date', '')
-                                    if not row_date.startswith(current_year):
-                                        continue
-                                    dl    = row.get('Downloads') or row.get('Total Downloads') or row.get('First Time Downloads') or '0'
-                                    re_dl = row.get('Redownloads') or row.get('Re-Downloads') or '0'
-                                    try:
-                                        ios_downloads += int(str(dl).replace(',', '') or 0)
-                                        ios_downloads += int(str(re_dl).replace(',', '') or 0)
-                                    except ValueError:
-                                        pass
-                        if ios_downloads > 0:
-                            print(f"Apple Analytics: {ios_downloads:,} total downloads for {current_year}")
+                                    ios_downloads += int(str(dl).replace(',', '') or 0)
+                                    ios_downloads += int(str(re_dl).replace(',', '') or 0)
+                                    found_download_data = True
+                                except ValueError:
+                                    pass
+
+                # If no usable data found, create a ONE_TIME_SNAPSHOT to get last 365 days
+                if not found_download_data:
+                    has_snapshot = any(
+                        r.get('attributes', {}).get('accessType') == 'ONE_TIME_SNAPSHOT'
+                        for r in all_requests
+                    )
+                    if not has_snapshot:
+                        print("Creating ONE_TIME_SNAPSHOT request to get historical downloads (last 365 days)...")
+                        cr = requests.post(
+                            'https://api.appstoreconnect.apple.com/v1/analyticsReportRequests',
+                            headers={**headers_auth, 'Content-Type': 'application/json'},
+                            data=pyjson.dumps({
+                                "data": {
+                                    "type": "analyticsReportRequests",
+                                    "attributes": {"accessType": "ONE_TIME_SNAPSHOT"},
+                                    "relationships": {"app": {"data": {"type": "apps", "id": APPLE_APP_ID}}}
+                                }
+                            })
+                        )
+                        if cr.status_code == 201:
+                            snap_id = cr.json()['data']['id']
+                            print(f"ONE_TIME_SNAPSHOT created: {snap_id} — try syncing in 30 minutes.")
                         else:
-                            print("Apple Analytics: download report not ready yet — will appear after next sync.")
+                            print(f"Snapshot creation failed: {cr.status_code} {cr.text[:200]}")
+                    else:
+                        print("ONE_TIME_SNAPSHOT already exists but data not ready yet — try again in 30 minutes.")
+
+                if ios_downloads > 0:
+                    print(f"Apple Analytics: {ios_downloads:,} total downloads for {current_year}")
+                else:
+                    print("Apple Analytics: no download data found yet — try syncing again in 30 min.")
+
 
             except Exception as e:
                 print(f"Error fetching Apple data: {e}")
