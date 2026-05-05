@@ -337,8 +337,8 @@ def sync_private_data():
                                     if product_type == '7F':
                                         ios_subscriptions += units
                                         month_subs        += units
-                                    elif product_type in ('1', 'F1'):
-                                        # Type 1 = paid/free download, F1 = free download (alternate code)
+                                    elif product_type in ('3F', '1F', '1', 'F1'):
+                                        # 3F = free app download (confirmed from debug output)
                                         ios_dl_from_sales += units
                                         month_dl          += units
                             print(f"Apple Sales {month_str}: {month_dl:,} downloads  |  {month_subs:,} renewals")
