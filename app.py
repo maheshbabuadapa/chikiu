@@ -288,12 +288,11 @@ def sync_private_data():
                         private_key, algorithm="ES256", headers={"kid": key_id}
                     )
 
-                # ── Part A: Sales API (available NOW) ──────────────────────────────
-                # Gets subscription renewals (7F), app updates (1F), and in-app purchases
-                # NOTE: Free app downloads (type '1') do NOT appear in Sales Reports
+                # ── Sales API: subscriptions (7F) AND downloads (type 1) ────────────────
                 if vendor_number:
                     current_month_num = datetime.now().month
                     ios_subscriptions = 0   # 7F — insurance policy renewals
+                    ios_dl_from_sales = 0   # type 1 — free app downloads
 
                     for month_num in range(1, current_month_num + 1):
                         month_str = f"{current_year}-{month_num:02d}"
@@ -311,125 +310,26 @@ def sync_private_data():
                                 data = resp.content.decode('utf-8')
                             reader = csv.DictReader(sysio.StringIO(data), delimiter='\t')
                             month_subs = 0
+                            month_dl   = 0
                             for row in reader:
                                 units        = int(row.get('Units', 0) or 0)
                                 product_type = row.get('Product Type Identifier', '').strip()
                                 apple_id     = str(row.get('Apple Identifier', '')).strip()
-                                if apple_id == APPLE_APP_ID and product_type == '7F':
-                                    ios_subscriptions += units
-                                    month_subs += units
-                            print(f"Apple Sales {month_str}: {month_subs:,} subscription renewals")
-                    print(f"Apple Sales total: {ios_subscriptions:,} subscription renewals for {current_year}")
-                    ios_uninstalls = ios_subscriptions  # pass subscription count to save step
-
-                # ── Part B: Analytics API (downloads) ────────────────────────────
-                headers_auth = {'Authorization': f'Bearer {make_token()}'}
-
-                # Check all existing requests (any type) for usable reports
-                all_requests = []
-                list_resp = requests.get(
-                    f'https://api.appstoreconnect.apple.com/v1/analyticsReportRequests?filter[app]={APPLE_APP_ID}',
-                    headers=headers_auth
-                )
-                if list_resp.status_code == 200:
-                    all_requests = list_resp.json().get('data', [])
-                    print(f"Apple Analytics: found {len(all_requests)} existing request(s)")
-
-                # Try every existing request — check all their reports for download data
-                found_download_data = False
-                for req in all_requests:
-                    req_id   = req['id']
-                    req_type = req.get('attributes', {}).get('accessType', '?')
-                    rep_resp = requests.get(
-                        f'https://api.appstoreconnect.apple.com/v1/analyticsReportRequests/{req_id}/reports',
-                        headers={'Authorization': f'Bearer {make_token()}'}
-                    )
-                    if rep_resp.status_code != 200:
-                        print(f"  Request {req_id} ({req_type}): reports endpoint returned {rep_resp.status_code}")
-                        continue
-
-                    reports = rep_resp.json().get('data', [])
-                    categories = [r.get('attributes', {}).get('category') for r in reports]
-                    states     = [r.get('attributes', {}).get('processingState') for r in reports]
-                    print(f"  Request {req_id} ({req_type}): {len(reports)} report(s) — categories={categories}, states={states}")
-
-                    for report in reports:
-                        attrs    = report.get('attributes', {})
-                        category = attrs.get('category', '')
-                        state    = attrs.get('processingState', '')
-                        if state == 'FAILED':
-                            print(f"    Report {report['id']} ({category}) FAILED — skipping")
-                            continue
-                        # Try all categories — APP_USAGE is the one with downloads
-                        seg_resp = requests.get(
-                            f'https://api.appstoreconnect.apple.com/v1/analyticsReports/{report["id"]}/segments',
-                            headers={'Authorization': f'Bearer {make_token()}'}
-                        )
-                        if seg_resp.status_code != 200:
-                            continue
-                        segs = seg_resp.json().get('data', [])
-                        print(f"    Report {report['id']} ({category}): {len(segs)} segment(s)")
-
-                        for seg in segs:
-                            dl_url = seg.get('attributes', {}).get('url', '')
-                            if not dl_url:
-                                continue
-                            sr = requests.get(dl_url, headers={'Authorization': f'Bearer {make_token()}'})
-                            if sr.status_code != 200:
-                                continue
-                            try:
-                                raw = gzip.decompress(sr.content).decode('utf-8')
-                            except Exception:
-                                raw = sr.content.decode('utf-8')
-                            reader = csv.DictReader(sysio.StringIO(raw), delimiter='\t')
-                            headers_row = None
-                            for row in reader:
-                                if headers_row is None:
-                                    headers_row = list(row.keys())
-                                    print(f"      Segment columns: {headers_row[:8]}")
-                                row_date = row.get('Date', '') or row.get('date', '')
-                                if not row_date.startswith(current_year):
-                                    continue
-                                dl    = row.get('Downloads') or row.get('Total Downloads') or row.get('First Time Downloads') or '0'
-                                re_dl = row.get('Redownloads') or row.get('Re-Downloads') or '0'
-                                try:
-                                    ios_downloads += int(str(dl).replace(',', '') or 0)
-                                    ios_downloads += int(str(re_dl).replace(',', '') or 0)
-                                    found_download_data = True
-                                except ValueError:
-                                    pass
-
-                # If no usable data found, create a ONE_TIME_SNAPSHOT to get last 365 days
-                if not found_download_data:
-                    has_snapshot = any(
-                        r.get('attributes', {}).get('accessType') == 'ONE_TIME_SNAPSHOT'
-                        for r in all_requests
-                    )
-                    if not has_snapshot:
-                        print("Creating ONE_TIME_SNAPSHOT request to get historical downloads (last 365 days)...")
-                        cr = requests.post(
-                            'https://api.appstoreconnect.apple.com/v1/analyticsReportRequests',
-                            headers={**headers_auth, 'Content-Type': 'application/json'},
-                            data=pyjson.dumps({
-                                "data": {
-                                    "type": "analyticsReportRequests",
-                                    "attributes": {"accessType": "ONE_TIME_SNAPSHOT"},
-                                    "relationships": {"app": {"data": {"type": "apps", "id": APPLE_APP_ID}}}
-                                }
-                            })
-                        )
-                        if cr.status_code == 201:
-                            snap_id = cr.json()['data']['id']
-                            print(f"ONE_TIME_SNAPSHOT created: {snap_id} — try syncing in 30 minutes.")
+                                if apple_id == APPLE_APP_ID:
+                                    if product_type == '7F':
+                                        ios_subscriptions += units
+                                        month_subs        += units
+                                    elif product_type == '1':
+                                        # Type 1 = free/paid app download event
+                                        ios_dl_from_sales += units
+                                        month_dl          += units
+                            print(f"Apple Sales {month_str}: {month_dl:,} downloads  |  {month_subs:,} renewals")
                         else:
-                            print(f"Snapshot creation failed: {cr.status_code} {cr.text[:200]}")
-                    else:
-                        print("ONE_TIME_SNAPSHOT already exists but data not ready yet — try again in 30 minutes.")
+                            print(f"Apple Sales {month_str}: HTTP {resp.status_code}")
 
-                if ios_downloads > 0:
-                    print(f"Apple Analytics: {ios_downloads:,} total downloads for {current_year}")
-                else:
-                    print("Apple Analytics: no download data found yet — try syncing again in 30 min.")
+                    print(f"Apple Sales YTD: {ios_dl_from_sales:,} downloads, {ios_subscriptions:,} renewals")
+                    ios_downloads  = ios_dl_from_sales
+                    ios_uninstalls = ios_subscriptions   # passed to upsert as subscriptions field
 
 
             except Exception as e:
