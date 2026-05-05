@@ -548,9 +548,33 @@ def sync_private_data():
                 if found_downloads:
                     print(f"Analytics API: {ios_downloads:,} iOS downloads for {current_year}")
 
-                # Step 4: if no data yet, create a new ONGOING request (POST is allowed)
-                if not found_downloads:
-                    print("No analytics data yet — creating ONGOING report request via POST...")
+                # Step 4: if no stored IDs, try app relationship endpoint to discover existing ones
+                if not stored_ids:
+                    print("Trying app relationship endpoint to discover existing request IDs...")
+                    rel_resp = requests.get(
+                        f'https://api.appstoreconnect.apple.com/v1/apps/{internal_app_id}/analyticsReportRequests',
+                        headers={'Authorization': f'Bearer {make_token()}'}
+                    )
+                    print(f"  App relationship status: {rel_resp.status_code}")
+                    if rel_resp.status_code == 200:
+                        for req in rel_resp.json().get('data', []):
+                            rid = req['id']
+                            atype = req.get('attributes', {}).get('accessType', 'UNKNOWN')
+                            print(f"  Discovered request ID: {rid} ({atype})")
+                            with sqlite3.connect(DB_NAME) as _c:
+                                _c.execute(
+                                    'INSERT OR IGNORE INTO analytics_request_ids '
+                                    '(request_id, app_id, access_type, created) VALUES (?,?,?,?)',
+                                    (rid, internal_app_id, atype,
+                                     datetime.now().strftime('%Y-%m-%d %H:%M'))
+                                )
+                            stored_ids.append((rid, atype))
+                    else:
+                        print(f"  Body: {rel_resp.text[:300]}")
+
+                # Step 5: create a new ONGOING request if we still have no IDs
+                if not stored_ids:
+                    print("No existing requests found — creating new ONGOING request via POST...")
                     cr = requests.post(
                         'https://api.appstoreconnect.apple.com/v1/analyticsReportRequests',
                         headers={'Authorization': f'Bearer {make_token()}',
@@ -565,9 +589,10 @@ def sync_private_data():
                             }
                         })
                     )
+                    print(f"  POST status: {cr.status_code} — {cr.text[:400]}")
                     if cr.status_code == 201:
                         new_id = cr.json()['data']['id']
-                        print(f"ONGOING request created: {new_id} — data ready in ~24 hours")
+                        print(f"  ONGOING request created: {new_id} — reports ready in ~24 hours")
                         with sqlite3.connect(DB_NAME) as _c:
                             _c.execute(
                                 'INSERT OR IGNORE INTO analytics_request_ids '
@@ -576,8 +601,25 @@ def sync_private_data():
                                  datetime.now().strftime('%Y-%m-%d %H:%M'))
                             )
                     elif cr.status_code == 409:
-                        print("ONGOING request already exists (409 Conflict) — but we lost the ID.")
-                        print("Check App Store Connect for the request ID and add it manually.")
+                        # 409 = already exists; try to extract the ID from the error body
+                        body = cr.json()
+                        existing_id = None
+                        for err in body.get('errors', []):
+                            src = err.get('source', {})
+                            existing_id = (src.get('parameter') or
+                                           err.get('meta', {}).get('existingId'))
+                        print(f"  409 body: {pyjson.dumps(body)[:500]}")
+                        if existing_id:
+                            print(f"  Recovered existing ID from 409 body: {existing_id}")
+                            with sqlite3.connect(DB_NAME) as _c:
+                                _c.execute(
+                                    'INSERT OR IGNORE INTO analytics_request_ids '
+                                    '(request_id, app_id, access_type, created) VALUES (?,?,?,?)',
+                                    (existing_id, internal_app_id, 'ONGOING',
+                                     datetime.now().strftime('%Y-%m-%d %H:%M'))
+                                )
+                        else:
+                            print("  Could not extract existing ID from 409 — sync again tomorrow")
                     else:
                         print(f"POST analytics request failed: {cr.status_code} — {cr.text[:300]}")
 
