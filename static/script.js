@@ -65,6 +65,38 @@ document.addEventListener('DOMContentLoaded', () => {
         renderBarChart(yearly);
         renderDonutChart(metrics);
         lastUpdated.textContent = 'Last updated: ' + new Date().toLocaleString();
+
+        // Load app version info separately (slower network call)
+        fetchVersions();
+    }
+
+    async function fetchVersions() {
+        try {
+            const v = await fetch('/api/app-versions').then(r => r.json());
+
+            // ── Android ──────────────────────────────────────────
+            const a = v.android || {};
+            set('android-version',      a.version      || 'Not available');
+            set('android-release-date', a.release_date || 'Not available');
+            set('android-min-os',       a.min_android  ? `Android ${a.min_android}+` : 'Not available');
+            set('android-size',         a.size         || 'Not available');
+            set('android-notes',        a.release_notes || 'No release notes available.');
+            const aLink = document.getElementById('android-store-link');
+            if (aLink && a.store_url) { aLink.href = a.store_url; aLink.style.display = 'inline'; }
+
+            // ── iOS ───────────────────────────────────────────────
+            const i = v.ios || {};
+            set('ios-version',      i.version      || 'Not available');
+            set('ios-release-date', i.release_date || 'Not available');
+            set('ios-min-os',       i.min_os       ? `iOS ${i.min_os}+` : 'Not available');
+            set('ios-size',         i.size_mb      ? `${i.size_mb} MB` : 'Not available');
+            set('ios-notes',        i.release_notes || 'No release notes available.');
+            const iLink = document.getElementById('ios-store-link');
+            if (iLink && i.store_url) { iLink.href = i.store_url; iLink.style.display = 'inline'; }
+
+        } catch (err) {
+            console.error('Version fetch failed:', err);
+        }
     }
 
     // ── KPI Cards ─────────────────────────────────────────────
