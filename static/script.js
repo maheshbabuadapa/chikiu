@@ -67,54 +67,7 @@ document.addEventListener('DOMContentLoaded', () => {
         lastUpdated.textContent = 'Last updated: ' + new Date().toLocaleString();
 
         fetchVersions();
-        fetchIosOverride();   // load manually-set iOS download count
     }
-
-    // ── iOS Download Override (manual entry when Analytics API is blocked) ──
-    async function fetchIosOverride() {
-        try {
-            const overrides = await fetch('/api/ios-downloads/get').then(r => r.json());
-            const thisYear  = String(new Date().getFullYear());
-            const rec       = overrides.find(o => o.year === thisYear);
-            if (rec && rec.count > 0) {
-                set('kpi-ios-ytd',      fmt(rec.count));
-                set('kpi-ios-ytd-note', `Jan 1 – today · Verified ${rec.updated}`);
-                const inp = document.getElementById('ios-dl-input');
-                if (inp) inp.value = rec.count;
-            } else {
-                set('kpi-ios-ytd', '—');
-                set('kpi-ios-ytd-note', 'Click ✏️ below to enter from App Store Connect');
-            }
-        } catch (e) { console.error('iOS override fetch failed:', e); }
-    }
-
-    // Wire Save button
-    document.addEventListener('DOMContentLoaded', () => {
-        const saveBtn = document.getElementById('ios-dl-save');
-        if (saveBtn) {
-            saveBtn.addEventListener('click', async () => {
-                const inp   = document.getElementById('ios-dl-input');
-                const count = parseInt(inp ? inp.value : '0', 10);
-                if (!count || count <= 0) { alert('Please enter a valid download count'); return; }
-                saveBtn.textContent = 'Saving…';
-                try {
-                    const res = await fetch('/api/ios-downloads/set', {
-                        method:  'POST',
-                        headers: {'Content-Type': 'application/json'},
-                        body:    JSON.stringify({ year: new Date().getFullYear(), count })
-                    }).then(r => r.json());
-                    set('kpi-ios-ytd',      fmt(res.count));
-                    set('kpi-ios-ytd-note', `Jan 1 – today · Verified ${res.updated}`);
-                    document.getElementById('ios-update-panel').style.display = 'none';
-                    document.getElementById('ios-update-toggle').style.display = 'inline';
-                    saveBtn.textContent = 'Save';
-                } catch (e) {
-                    alert('Save failed — check console');
-                    saveBtn.textContent = 'Save';
-                }
-            });
-        }
-    });
 
     async function fetchVersions() {
         try {
