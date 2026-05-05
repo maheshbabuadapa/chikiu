@@ -313,7 +313,7 @@ def sync_private_data():
                             month_dl   = 0
                             all_rows   = list(reader)
 
-                            # DEBUG: on first month only, dump all rows so we can see what Apple sends
+                            # DEBUG: on first month only, dump ALL 3F rows to spot duplicates
                             if month_num == 1:
                                 print(f"[DEBUG] Sales report {month_str}: {len(all_rows)} rows total")
                                 seen_types = {}
@@ -321,13 +321,19 @@ def sync_private_data():
                                     pt  = r.get('Product Type Identifier', '?').strip()
                                     aid = str(r.get('Apple Identifier', '?')).strip()
                                     key = (aid, pt)
-                                    if key not in seen_types:
-                                        seen_types[key] = int(r.get('Units', 0) or 0)
-                                    else:
-                                        seen_types[key] += int(r.get('Units', 0) or 0)
+                                    seen_types[key] = seen_types.get(key, 0) + int(r.get('Units', 0) or 0)
                                 for (aid, pt), units in sorted(seen_types.items()):
                                     marker = " ← OUR APP" if aid == APPLE_APP_ID else ""
                                     print(f"  Apple ID={aid}  Type={pt}  Units={units}{marker}")
+
+                                # Print EVERY 3F row individually to spot territory duplication
+                                print(f"\n  [3F row details for {month_str}]:")
+                                for r in all_rows:
+                                    if str(r.get('Apple Identifier','')).strip() == APPLE_APP_ID \
+                                       and r.get('Product Type Identifier','').strip() == '3F':
+                                        terr  = r.get('Country Code') or r.get('Territory') or r.get('Storefront') or '?'
+                                        units = r.get('Units','0')
+                                        print(f"    Territory={terr}  Units={units}")
 
                             for row in all_rows:
                                 units        = int(row.get('Units', 0) or 0)
