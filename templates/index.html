@@ -95,8 +95,33 @@
             <div class="kpi-card kpi-accent-ios">
                 <div class="kpi-body">
                     <div class="kpi-label">iOS Downloads (YTD)</div>
-                    <div class="kpi-value" id="kpi-ios-ytd">⏳</div>
-                    <div class="kpi-note">Jan 1 – today · Analytics API ready tomorrow</div>
+                    <div class="kpi-value" id="kpi-ios-ytd">—</div>
+                    <div class="kpi-note" id="kpi-ios-ytd-note">Jan 1 – today · Apple App Store</div>
+                    <!-- Inline update panel (visible via toggle) -->
+                    <div id="ios-update-panel" style="display:none; margin-top:.75rem;">
+                        <div style="display:flex; gap:.4rem; align-items:center; flex-wrap:wrap;">
+                            <input id="ios-dl-input" type="number" min="0" placeholder="e.g. 1411"
+                                   style="width:110px; padding:.3rem .5rem; border-radius:6px;
+                                          border:1.5px solid #6366f1; font-size:.9rem; outline:none;">
+                            <button id="ios-dl-save" style="padding:.3rem .8rem; border-radius:6px;
+                                    background:#6366f1; color:#fff; border:none; cursor:pointer;
+                                    font-size:.82rem; font-weight:600;">Save</button>
+                            <button onclick="document.getElementById('ios-update-panel').style.display='none'"
+                                    style="padding:.3rem .6rem; border-radius:6px; background:transparent;
+                                           color:#94a3b8; border:1px solid #e2e8f0; cursor:pointer;
+                                           font-size:.82rem;">Cancel</button>
+                        </div>
+                        <div style="font-size:.7rem; color:#94a3b8; margin-top:.3rem;">
+                            Enter the number from App Store Connect → Analytics → Downloads
+                        </div>
+                    </div>
+                    <button id="ios-update-toggle"
+                            onclick="document.getElementById('ios-update-panel').style.display='block';
+                                     document.getElementById('ios-update-toggle').style.display='none';"
+                            style="margin-top:.5rem; font-size:.68rem; color:#6366f1; background:none;
+                                   border:none; cursor:pointer; padding:0; text-decoration:underline;">
+                        ✏️ Update from App Store Connect
+                    </button>
                 </div>
             </div>
         </section>
