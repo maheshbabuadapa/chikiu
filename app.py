@@ -44,6 +44,16 @@ def init_db():
             cursor.execute('ALTER TABLE yearly_metrics ADD COLUMN subscriptions INTEGER NOT NULL DEFAULT 0')
         except Exception:
             pass
+        # Store Apple Analytics report request IDs (GET_COLLECTION is blocked, must use GET_INSTANCE)
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS analytics_request_ids (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                request_id  TEXT    NOT NULL UNIQUE,
+                app_id      TEXT    NOT NULL,
+                access_type TEXT    NOT NULL,
+                created     TEXT    NOT NULL
+            )
+        ''')
         # Table for manually-set iOS download overrides (when Analytics API is blocked)
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS ios_download_override (
@@ -462,35 +472,114 @@ def sync_private_data():
                             print(f"Apple Sales {month_str}: HTTP {resp.status_code} — {resp.text[:150]}")
 
                     print(f"Apple Sales YTD: {ios_subscriptions:,} renewals")
-                    ios_downloads  = 0               # default — overridden by CSV file if present
+                    ios_downloads  = 0               # will be set by Analytics API below
                     ios_uninstalls = ios_subscriptions   # passed to upsert as subscriptions field
 
-                # ── Fallback: read manually exported App Store Connect CSV ──────
-                # Export from: App Store Connect → Analytics → Downloads → Export
-                # Save file as: ios_downloads_2026.csv in project folder
-                csv_path = os.path.join(os.path.dirname(__file__), f'ios_downloads_{current_year}.csv')
-                if os.path.exists(csv_path):
-                    try:
-                        import csv as _csv
-                        total_dl = 0
-                        with open(csv_path, newline='', encoding='utf-8-sig') as f:
-                            # App Store Connect CSV has a date column and a Downloads column
-                            reader = _csv.DictReader(f)
-                            for r in reader:
-                                # Try common column names Apple uses in exports
-                                val = (r.get('Downloads') or r.get('Total Downloads')
-                                       or r.get('First Time Downloads') or '0')
+                # ── Analytics API: correct usage (POST + GET_INSTANCE) ───────────
+                # GET_COLLECTION is blocked; we must POST to create, then GET by ID
+                import json as pyjson
+
+                # Step 1: get the internal app ID from the apps list
+                internal_app_id = APPLE_APP_ID  # default to iTunes ID
+                apps_resp = requests.get(
+                    'https://api.appstoreconnect.apple.com/v1/apps'
+                    '?filter[bundleId]=com.germania.mobile.app',
+                    headers={'Authorization': f'Bearer {make_token()}'}
+                )
+                if apps_resp.status_code == 200:
+                    app_data = apps_resp.json().get('data', [])
+                    if app_data:
+                        internal_app_id = app_data[0]['id']
+                        print(f"Internal App ID confirmed: {internal_app_id}")
+
+                # Step 2: load any previously stored request IDs from the DB
+                stored_ids = []
+                with sqlite3.connect(DB_NAME) as _c:
+                    rows = _c.execute('SELECT request_id, access_type FROM analytics_request_ids').fetchall()
+                    stored_ids = [(r[0], r[1]) for r in rows]
+                print(f"Stored analytics request IDs: {stored_ids}")
+
+                # Step 3: try each stored ID using GET_INSTANCE (allowed!)
+                found_downloads = False
+                for req_id, access_type in stored_ids:
+                    rep_resp = requests.get(
+                        f'https://api.appstoreconnect.apple.com/v1/analyticsReportRequests/{req_id}/reports',
+                        headers={'Authorization': f'Bearer {make_token()}'}
+                    )
+                    print(f"  Request {req_id} ({access_type}): reports status={rep_resp.status_code}")
+                    if rep_resp.status_code != 200:
+                        continue
+                    for report in rep_resp.json().get('data', []):
+                        category = report.get('attributes', {}).get('category', '')
+                        state    = report.get('attributes', {}).get('processingState', '')
+                        if state != 'READY':
+                            print(f"    Report {report['id']} ({category}): {state} — not ready yet")
+                            continue
+                        seg_resp = requests.get(
+                            f'https://api.appstoreconnect.apple.com/v1/analyticsReports/{report["id"]}/segments',
+                            headers={'Authorization': f'Bearer {make_token()}'}
+                        )
+                        if seg_resp.status_code != 200:
+                            continue
+                        for seg in seg_resp.json().get('data', []):
+                            dl_url = seg.get('attributes', {}).get('url', '')
+                            if not dl_url:
+                                continue
+                            sr = requests.get(dl_url, headers={'Authorization': f'Bearer {make_token()}'})
+                            if sr.status_code != 200:
+                                continue
+                            try:
+                                raw = gzip.decompress(sr.content).decode('utf-8')
+                            except Exception:
+                                raw = sr.content.decode('utf-8')
+                            reader = csv.DictReader(sysio.StringIO(raw), delimiter='\t')
+                            for row in reader:
+                                row_date = row.get('Date', '') or row.get('date', '')
+                                if not row_date.startswith(current_year):
+                                    continue
+                                dl = (row.get('Downloads') or row.get('Total Downloads')
+                                      or row.get('First Time Downloads') or '0')
                                 try:
-                                    total_dl += int(str(val).replace(',', '').strip() or 0)
+                                    ios_downloads += int(str(dl).replace(',', '') or 0)
+                                    found_downloads = True
                                 except ValueError:
                                     pass
-                        if total_dl > 0:
-                            ios_downloads = total_dl
-                            print(f"iOS downloads from CSV file: {ios_downloads:,} (exact match with App Store Connect)")
-                        else:
-                            print(f"CSV file found at {csv_path} but no download values parsed — check column names")
-                    except Exception as e:
-                        print(f"CSV read error: {e}")
+
+                if found_downloads:
+                    print(f"Analytics API: {ios_downloads:,} iOS downloads for {current_year}")
+
+                # Step 4: if no data yet, create a new ONGOING request (POST is allowed)
+                if not found_downloads:
+                    print("No analytics data yet — creating ONGOING report request via POST...")
+                    cr = requests.post(
+                        'https://api.appstoreconnect.apple.com/v1/analyticsReportRequests',
+                        headers={'Authorization': f'Bearer {make_token()}',
+                                 'Content-Type': 'application/json'},
+                        data=pyjson.dumps({
+                            "data": {
+                                "type": "analyticsReportRequests",
+                                "attributes": {"accessType": "ONGOING"},
+                                "relationships": {
+                                    "app": {"data": {"type": "apps", "id": internal_app_id}}
+                                }
+                            }
+                        })
+                    )
+                    if cr.status_code == 201:
+                        new_id = cr.json()['data']['id']
+                        print(f"ONGOING request created: {new_id} — data ready in ~24 hours")
+                        with sqlite3.connect(DB_NAME) as _c:
+                            _c.execute(
+                                'INSERT OR IGNORE INTO analytics_request_ids '
+                                '(request_id, app_id, access_type, created) VALUES (?,?,?,?)',
+                                (new_id, internal_app_id, 'ONGOING',
+                                 datetime.now().strftime('%Y-%m-%d %H:%M'))
+                            )
+                    elif cr.status_code == 409:
+                        print("ONGOING request already exists (409 Conflict) — but we lost the ID.")
+                        print("Check App Store Connect for the request ID and add it manually.")
+                    else:
+                        print(f"POST analytics request failed: {cr.status_code} — {cr.text[:300]}")
 
 
             except Exception as e:
